@@ -1334,6 +1334,13 @@
 
   var panel = null;
 
+  // A setting shown without opening anything gets a proper name. The advanced
+  // fields keep their config key, because that is what you would type in the
+  // file or from the console.
+  var FIELD_LABELS = {
+    searchHotkey: 'Search Hotkey'
+  };
+
   var FIELD_NOTES = {
     speedFactor: 'Higher is faster. 1 turns animation scaling off.',
     scaleTimeouts: 'Also speeds up dialogs and menus on 13.x. Affects app timers, so try it before leaving it on.',
@@ -1357,49 +1364,50 @@
     {
       title: 'Dark Mode',
       master: 'darkMode',
-      blurb: 'Repaints Content Manager in dark colours. Surfaces are darkened and text ' +
-             'lightened; photographs are left alone.',
+      blurb: 'Renders Content Manager using a dark mode theme. (Some images and other ' +
+             'areas still need to be refined.)',
       advanced: ['darkModeInvertLogos']
     },
     {
-      title: 'Speedup',
+      title: 'UI Transition Speed',
       master: 'speedFactor',
       masterKind: 'factor',
-      blurb: 'Runs the interface animations faster. Almost every one is a jQuery animation ' +
-             'on 11.x and a CSS transition on 13.x.',
+      blurb: 'Reduces or eliminates the delays introduced by Content Manager\'s UX ' +
+             'transition animations.',
       advanced: ['speedFactor', 'scaleJquery', 'scaleCss', 'scaleWebAnimations',
                  'scaleTimeouts', 'timeoutCeilingMs']
     },
     {
-      title: 'Pinning Text Only Menus',
+      title: 'Text Only Compact Menus',
       master: 'textOnlyPinnedMenu',
-      blurb: 'Shows labels instead of icons in the docked side menus, so entries can be ' +
-             'read without hovering.',
+      blurb: '(Content Manager 12.50 and up) Lays out Content Manager\'s compact side ' +
+             'menus using text-only, which is easier to identify than the original ' +
+             'icons-only.',
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
     },
     {
       title: 'Focus Search',
       master: 'focusSearch',
-      blurb: 'Adds a keyboard shortcut that jumps to the search box, and says so in the ' +
-             'box\'s placeholder.',
+      blurb: 'Adds a keyboard shortcut to focus each page\'s search box.',
       always: ['searchHotkey'],
       advanced: []
     },
     {
-      title: 'Host Badge',
+      title: 'Host Identification',
       // No single boolean owns this one, so the master is both sub-options at
       // once: off turns both off, on restores both.
       masterKind: 'any',
       masterKeys: ['showHostBadge', 'hostInTitle'],
-      blurb: 'Names the server, so two tabs open on different Content Managers cannot be ' +
-             'confused. On the login page, and in the tab title.',
+      blurb: 'Shows the URL of this Content Manager on the login page and on the tab ' +
+             'title. Useful if you\'re working with multiple instances.',
       advanced: ['showHostBadge', 'hostInTitle', 'hostBadgeSize']
     },
     {
-      title: 'Login Button enablement',
+      title: 'Login Button Fix',
       master: 'fixSignIn',
-      blurb: 'Lets a password manager fill and submit the login form: clears the readonly ' +
-             'the server may set, and tells the app the fields changed.',
+      blurb: 'Fix a problem where autofill (e.g. from a password manager) can\'t login ' +
+             'because Content Manager doesn\'t re-enable the disabled Login button in ' +
+             'all cases.',
       advanced: []
     },
     {
@@ -1488,13 +1496,13 @@
     var overridesField = null;
     var masters = [];
 
-    function row(key, control, note, container) {
+    function row(label, control, note, container) {
       var wrap = document.createElement('label');
       wrap.style.cssText = 'display:flex;gap:12px;align-items:flex-start;padding:8px 0;' +
         'border-bottom:1px solid ' + skin.line + ';';
       var left = document.createElement('div');
       left.style.cssText = 'flex:1;min-width:0';
-      left.innerHTML = '<div style="font-weight:550">' + key + '</div>' +
+      left.innerHTML = '<div style="font-weight:550">' + label + '</div>' +
         (note ? '<div style="color:' + skin.muted + ';font-size:12px;margin-top:1px">' + note + '</div>' : '');
       wrap.appendChild(left);
       var right = document.createElement('div');
@@ -1545,7 +1553,7 @@
           ';border-radius:4px;font:inherit;background:' + skin.field + ';color:' + skin.text;
       }
       inputs[key] = el;
-      row(key, el, note, container);
+      row(FIELD_LABELS[key] || key, el, note, container);
     }
 
     var placed = {};
@@ -1595,11 +1603,29 @@
       var details = document.createElement('details');
       details.style.cssText = 'margin:2px 0 0';
       var summary = document.createElement('summary');
-      summary.textContent = 'Advanced';
+      // The native marker does not show here, so the triangle is drawn. Borders
+      // rather than a glyph: no font can fail to have it, and it takes the
+      // summary's own colour. display:flex also guarantees no second marker,
+      // because only a list-item has one.
       summary.style.cssText = 'cursor:pointer;font-size:12px;color:#1a6cff;padding:6px 0;' +
+        'display:flex;align-items:center;gap:7px;list-style:none;' +
         '-webkit-user-select:none;user-select:none';
+      var arrow = document.createElement('span');
+      arrow.style.cssText = 'flex:0 0 auto;width:0;height:0;border-left:5px solid currentColor;' +
+        'border-top:4px solid transparent;border-bottom:4px solid transparent;' +
+        'transition:transform 120ms ease-out';
+      summary.appendChild(arrow);
+      var caption = document.createElement('span');
+      caption.textContent = 'Advanced';
+      summary.appendChild(caption);
       details.appendChild(summary);
+      details.addEventListener('toggle', function () {
+        arrow.style.transform = details.open ? 'rotate(90deg)' : '';
+      });
       var inner = document.createElement('div');
+      // Inset, so the detail reads as belonging to the expander above it rather
+      // than to the section.
+      inner.style.cssText = 'padding-left:17px';
       details.appendChild(inner);
       body.appendChild(details);
 

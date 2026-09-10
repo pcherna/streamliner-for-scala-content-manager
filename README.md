@@ -16,25 +16,25 @@ This package was developed using Claude Code and Claude Opus 5.
 
 ### Dark Mode
 
-Teaches Content Manager to render in a dark mode theme. Some images and other areas still need to be refined.
+Renders Content Manager using a dark mode theme. (Some images and other areas still need to be refined.)
 
-### Speedup
+### UI Transition Speed
 
-Content Manager has many UX animations that are quite slow by modern web standards. The Speedup feature reduces or eliminates the delays this causes.
+Reduces or eliminates the delays introduced by Content Manager's UX transition animations.
 
-### Pinning Text Only Menus
+### Text Only Compact Menus
 
-In Content Manager 13 and later, the menus have been moved to the sides. In compact form, these menus contain only icons, whereas words-only is much more useful.
+(Content Manager 12.50 and up) Lays out Content Manager's compact side menus using text-only, which is easier to identify than the original icons-only.
 
 ### Focus Search
 
 Adds a keyboard shortcut to focus each page's search box. Defaults to `/`, but can be changed to for example `Ctrl+k` or `Cmd+k`
 
-### Host Badge
+### Host Identification
 
-Puts the base URL of Content Manager on the login page and on the tab title. Useful if you're working with multiple instances.
+Shows the URL of this Content Manager on the login page and on the tab title. Useful if you're working with multiple instances.
 
-### Login Button Enablement
+### Login Button Fix
 
 Fix a problem where autofill (e.g. from a password manager) can't login because Content Manager doesn't re-enable the disabled **Login** button in all cases.
 
