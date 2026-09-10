@@ -2,7 +2,7 @@
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
 // @version      1.35.0
-// @description  Fixes and conveniences for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
+// @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @run-at       document-start
 // @grant        none

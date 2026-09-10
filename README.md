@@ -6,6 +6,8 @@ Streamliner provides various conveniences and fixes for Scala Content Manager, p
 Streamliner changes only what the browser renders. It does not modify the
 Content Manager server or any of its data.
 
+To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down.
+
 ## Use of AI Coding Tools
 
 This package was developed using Claude Code and Claude Opus 5.
