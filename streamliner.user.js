@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.34.0
-// @description  Autofill fix, faster animations, search hotkey, dark mode, text side menus and a settings panel.
+// @version      1.35.0
+// @description  Fixes and conveniences for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @run-at       document-start
 // @grant        none
@@ -117,7 +117,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.34.0';
+  var VERSION = '1.35.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
