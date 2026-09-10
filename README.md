@@ -38,7 +38,9 @@ Puts the base URL of Content Manager on the login page and on the tab title. Use
 
 Fix a problem where autofill (e.g. from a password manager) can't login because Content Manager doesn't re-enable the disabled **Login** button in all cases.
 
-## Install as a Chrome extension
+## Installing Streamliner
+
+### Install as a Chrome extension
 
 1. Open `chrome://extensions`.
 2. Turn on Developer mode.
@@ -53,7 +55,7 @@ That is because the match pattern `*://*/ContentManager/*` puts the wildcard in
 the host position, so colleagues do not have to edit anything for their own
 server. The script still only runs on `/ContentManager` paths.
 
-## Install as a userscript
+### Install as a userscript
 
 1. Install the [Tampermonkey extension](https://www.tampermonkey.net/).
 2. Open the [install link](https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js). Tampermonkey offers to install it.
