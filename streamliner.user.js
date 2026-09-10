@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.35.0
+// @version      1.36.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
+// @match        *://*/ContentManager
 // @run-at       document-start
 // @grant        none
 // @license      GPL-3.0-or-later
@@ -107,6 +108,13 @@
     } catch (e) { /* private mode, or corrupt json */ }
   }
 
+  // Reset must not hand the defaults object itself to CONFIG. An in-place edit
+  // of CONFIG.labelOverrides would then change the defaults too, and the save
+  // below would see no difference and write nothing.
+  function cloneValue(v) {
+    return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v;
+  }
+
   function saveConfig() {
     var out = {};
     for (var k in DEFAULTS) {
@@ -117,7 +125,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.35.0';
+  var VERSION = '1.36.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -170,7 +178,11 @@
     var origSpeed = $.speed;
     $.speed = function () {
       var opt = origSpeed.apply(this, arguments);
-      if (opt && typeof opt.duration === 'number') opt.duration = scale(opt.duration);
+      // Checked on every call, not once at install time. A patch cannot be
+      // taken back out, so switching the feature off has to stop here.
+      if (CONFIG.scaleJquery && opt && typeof opt.duration === 'number') {
+        opt.duration = scale(opt.duration);
+      }
       return opt;
     };
 
@@ -179,7 +191,8 @@
       $.fn.delay = function (time, type) {
         var named = $.fx && $.fx.speeds ? $.fx.speeds[time] : undefined;
         var ms = typeof named === 'number' ? named : time;
-        return origDelay.call(this, typeof ms === 'number' ? scale(ms) : ms, type);
+        var wanted = CONFIG.scaleJquery && typeof ms === 'number' ? scale(ms) : ms;
+        return origDelay.call(this, wanted, type);
       };
     }
 
@@ -211,6 +224,17 @@
     } catch (e) {
       log('could not trap window.' + name, e);
     }
+  }
+
+  // One install point, so the traps can also go in later: that is what lets the
+  // speed switches take effect without a reload.
+  var jqueryTrapped = false;
+
+  function installJqueryPatch() {
+    if (jqueryTrapped) return;
+    jqueryTrapped = true;
+    trapGlobal('jQuery', patchJquery);
+    trapGlobal('$', patchJquery);
   }
 
   // ------------------------------------------------------- stylesheet walk
@@ -266,6 +290,46 @@
     return sheets.length;
   }
 
+  // Both walkers cost real time: light.css on 13.x is half a megabyte, and
+  // walking it takes about 10ms. The sweep runs on every batch of DOM changes,
+  // so the walk has to be skipped when nothing it reads has changed.
+  //
+  // A count of stylesheets is not enough on its own. Content Manager pulls its
+  // stylesheet in with @import from an inline <style>, so document.styleSheets
+  // holds one sheet from the first moment and still holds one sheet after the
+  // real rules arrive. The fingerprint therefore counts rules, and looks inside
+  // an @import to see whether it has resolved yet.
+  function sheetSignature() {
+    var sheets = document.styleSheets;
+    if (!sheets) return '0';
+    var bits = [sheets.length];
+    for (var i = 0; i < sheets.length; i++) {
+      var rules = null;
+      try {
+        rules = sheets[i].cssRules;
+      } catch (e) {
+        rules = null; // cross-origin
+      }
+      if (!rules) {
+        bits.push('x');
+        continue;
+      }
+      var imported = 0;
+      for (var k = 0; k < rules.length; k++) {
+        if (rules[k].type !== CSSRule.IMPORT_RULE) continue;
+        var sub = null;
+        try {
+          sub = rules[k].styleSheet ? rules[k].styleSheet.cssRules : null;
+        } catch (e) {
+          sub = null;
+        }
+        imported += sub ? sub.length : 0;
+      }
+      bits.push(imported ? rules.length + '+' + imported : rules.length);
+    }
+    return bits.join(',');
+  }
+
   // ------------------------------------------------- CSS animation scaling
 
   var TIME_PROPS = [
@@ -299,9 +363,13 @@
   }
 
   var styleEl = null;
+  var cssBuiltAt = null;
 
   function applyCssScaling() {
     if (!CONFIG.scaleCss) return;
+    var signature = sheetSignature();
+    if (signature === cssBuiltAt) return;
+    cssBuiltAt = signature;
 
     var out = [];
     eachStyleRule(function (rule, prefix, suffix) {
@@ -335,6 +403,9 @@
 
     var orig = Element.prototype.animate;
     var patched = function (keyframes, options) {
+      if (!CONFIG.scaleWebAnimations) {
+        return orig.call(this, keyframes, options);
+      }
       if (typeof options === 'number') {
         options = scale(options);
       } else if (options && typeof options === 'object') {
@@ -362,7 +433,7 @@
     var patched = function (fn, delay) {
       var rest = Array.prototype.slice.call(arguments, 2);
       var d = typeof delay === 'number' ? delay : 0;
-      if (d > 0 && d <= CONFIG.timeoutCeilingMs) d = scale(d);
+      if (CONFIG.scaleTimeouts && d > 0 && d <= CONFIG.timeoutCeilingMs) d = scale(d);
       return orig.apply(window, [fn, d].concat(rest));
     };
     patched.__cmHelperPatched = true;
@@ -432,6 +503,7 @@
   }
 
   function onValueEvent(e) {
+    if (!CONFIG.fixSignIn) return;
     if (!isSignInInput(e.target)) return;
     notify(e.target, e.type);
   }
@@ -495,15 +567,28 @@
     document.title = host + ' \u00b7 ' + current;
   }
 
+  function removeHostTitle() {
+    var lead = window.location.host + ' \u00b7 ';
+    var current = document.title || '';
+    if (current.indexOf(lead) === 0) document.title = current.slice(lead.length);
+  }
+
+  // Both directions, so turning the feature off does not leave the prefix
+  // sitting there until the app happens to rewrite the title.
+  function syncHostTitle() {
+    if (CONFIG.hostInTitle) applyHostTitle();
+    else removeHostTitle();
+  }
+
   function watchTitle() {
     if (titleWatched) return;
     var node = document.querySelector('title');
     if (!node) return;
     titleWatched = true;
     new MutationObserver(function () {
-      applyHostTitle();
+      syncHostTitle();
     }).observe(node, { childList: true, characterData: true, subtree: true });
-    applyHostTitle();
+    syncHostTitle();
   }
 
   function removeHostBadge() {
@@ -703,6 +788,27 @@
       a.classList[label ? 'add' : 'remove']('cm-helper-has-label');
     }
     if (items.length) log('pinned menu: ' + labelled + '/' + items.length + ' items labelled');
+  }
+
+  // Turning the feature off has to undo what it did. Dropping the sheet alone
+  // left the injected label in the DOM with no rule to hide it, so a compact
+  // menu showed the icon and a bare label at the same time. A shortened label
+  // also has to get its full text back.
+  function removePinnedMenu() {
+    if (pinnedEl && pinnedEl.parentNode) pinnedEl.parentNode.removeChild(pinnedEl);
+    pinnedEl = null;
+    var items = document.querySelectorAll(PINNED_ITEM);
+    for (var i = 0; i < items.length; i++) {
+      var a = items[i];
+      a.classList.remove('cm-helper-has-label');
+      var mine = a.querySelector('.cm-helper-label');
+      if (mine && mine.parentNode) mine.parentNode.removeChild(mine);
+      var full = a.getAttribute('data-cm-full');
+      if (!full) continue;
+      var existing = a.querySelector('.nav-label, span');
+      if (existing && existing.textContent.trim() !== full) existing.textContent = full;
+      a.removeAttribute('data-cm-full');
+    }
   }
 
   // ------------------------------------------------------------- dark mode
@@ -1015,13 +1121,13 @@
 
   var darkEl = null;
   var darkOn = false;
-  var darkBuiltAt = -1;
+  var darkBuiltAt = null;
 
   function refreshDark() {
     if (!darkOn || !darkEl) return;
-    var count = document.styleSheets ? document.styleSheets.length : 0;
-    if (count === darkBuiltAt) return;
-    darkBuiltAt = count;
+    var signature = sheetSignature();
+    if (signature === darkBuiltAt) return;
+    darkBuiltAt = signature;
     darkEl.textContent = buildDarkCss();
   }
 
@@ -1029,7 +1135,7 @@
     darkOn = !!on;
     if (darkOn) {
       if (!darkEl) darkEl = makeStyle(DARK_ID);
-      darkBuiltAt = -1;
+      darkBuiltAt = null;
       refreshDark();
     }
     if (darkEl) darkEl.disabled = !darkOn;
@@ -1049,17 +1155,12 @@
   // right edge, so two of them land on top of each other. Ours takes the first
   // row and Logout moves down one, which also puts Settings before Logout.
   //
-  // The row height cannot simply be measured: the sweep runs while the dropdown
-  // is shut, where the entries have zero height. Measuring then produced a zero
-  // offset and left the new item layered underneath Logout. So when the live
-  // height is unavailable, the clone is briefly laid out with visibility hidden
-  // to measure it, which is invisible to the reader and needs no open dropdown.
-  // Lays an element out just long enough to measure it. The sweep runs while
-  // the dropdown is shut, where the entries have no box at all, and measuring
-  // then returned zero. Nothing is painted: the styles are restored in the same
-  // synchronous block.
-  // Measures what the entry wants on one line. Any pinned width is cleared
-  // first, or the previous measurement would be measured again.
+  // Measures what the entry wants on one line. The sweep runs while the dropdown
+  // is shut, where the entries have no box at all and a measurement comes back
+  // zero, so the element is laid out with visibility hidden just long enough to
+  // read it. Nothing is painted: the styles go back in the same synchronous
+  // block. Any pinned width is cleared first, or the previous measurement would
+  // be measured again.
   function measureBox(el) {
     var width = el.style.width;
     el.style.width = 'auto';
@@ -1092,7 +1193,6 @@
       top = parseFloat(window.getComputedStyle(logout).top);
       if (!isFinite(top)) return;
       logout.setAttribute('data-streamliner-base-top', String(top));
-      logout.setAttribute('data-streamliner-shifted', logout.style.top || '');
     } else {
       top = parseFloat(logout.getAttribute('data-streamliner-base-top'));
       if (!isFinite(top)) return;
@@ -1120,9 +1220,6 @@
     if (!width) return;
     node.style.boxSizing = 'border-box';
     node.style.width = width + 'px';
-    if (logout.getAttribute('data-streamliner-width') === null) {
-      logout.setAttribute('data-streamliner-width', logout.style.width || '');
-    }
     logout.style.boxSizing = 'border-box';
     logout.style.width = width + 'px';
   }
@@ -1248,8 +1345,6 @@
     hostInTitle: 'Puts the host in the tab title, in front of the page name.',
     darkModeInvertLogos: 'Keeps logos legible on a dark page. A saturated mark comes back lighter.'
   };
-
-  var RELOAD_KEYS = ['scaleJquery', 'scaleWebAnimations', 'scaleTimeouts'];
 
   // The panel is grouped by feature. Each group has a master switch on its
   // header row, a line saying what the feature does, and an Advanced expander
@@ -1412,13 +1507,13 @@
     function field(key, container) {
       if (!Object.prototype.hasOwnProperty.call(DEFAULTS, key)) return;
       var note = FIELD_NOTES[key] || '';
-      if (RELOAD_KEYS.indexOf(key) !== -1) note += (note ? ' ' : '') + 'Needs a reload.';
 
       if (key === 'labelOverrides') {
         var label = document.createElement('div');
         label.style.cssText = 'padding:8px 0 0;font-weight:550';
-        label.innerHTML = 'labelOverrides<div style="font-weight:400;color:#666;font-size:12px;' +
-          'margin-top:1px">One per line, <code>Full label = Short label</code></div>';
+        label.innerHTML = 'labelOverrides<div style="font-weight:400;color:' + skin.muted +
+          ';font-size:12px;margin-top:1px">One per line, ' +
+          '<code>Full label = Short label</code></div>';
         container.appendChild(label);
 
         overridesField = document.createElement('textarea');
@@ -1546,7 +1641,7 @@
     var save = button('Save', true);
 
     reset.addEventListener('click', function () {
-      Object.keys(DEFAULTS).forEach(function (k) { CONFIG[k] = DEFAULTS[k]; });
+      Object.keys(DEFAULTS).forEach(function (k) { CONFIG[k] = cloneValue(DEFAULTS[k]); });
       if (CONFIG.darkMode !== darkOn) setDark(CONFIG.darkMode);
       saveConfig();
       closeSettings();
@@ -1603,18 +1698,25 @@
   function applyAll() {
     if (styleEl) styleEl.textContent = '';
     applyCssScaling();
-    if (pinnedEl && pinnedEl.parentNode) pinnedEl.parentNode.removeChild(pinnedEl);
-    pinnedEl = null;
-    // Drop the marker class so labels are recomputed from scratch.
-    var items = document.querySelectorAll(PINNED_ITEM);
-    for (var i = 0; i < items.length; i++) items[i].classList.remove('cm-helper-has-label');
-    // Let the placeholder hint pick up a changed hotkey.
-    var box = document.querySelector('[data-cm-placeholder]');
-    if (box) {
-      box.setAttribute('placeholder', box.getAttribute('data-cm-placeholder'));
-      box.removeAttribute('data-cm-placeholder');
+    // A patch can be installed late, which is how a speed switch takes effect
+    // without a reload. Taking one out is what cannot be done, so the wrappers
+    // read the config on every call instead.
+    if (CONFIG.scaleJquery) installJqueryPatch();
+    if (CONFIG.scaleWebAnimations) patchWebAnimations();
+    if (CONFIG.scaleTimeouts) patchTimeouts();
+    // Always torn down: the sweep rebuilds it when the feature is still on, and
+    // labels are then recomputed from scratch.
+    removePinnedMenu();
+    // Let the placeholder hint pick up a changed hotkey. Every box that carries
+    // one, not just the first: a second box gets decorated as soon as it is the
+    // visible one, and both can be in the DOM at once.
+    var boxes = document.querySelectorAll('[data-cm-placeholder]');
+    for (var i = 0; i < boxes.length; i++) {
+      boxes[i].setAttribute('placeholder', boxes[i].getAttribute('data-cm-placeholder'));
+      boxes[i].removeAttribute('data-cm-placeholder');
     }
-    darkBuiltAt = -1;
+    cssBuiltAt = null;
+    darkBuiltAt = null;
     sweep();
     remeasureUserMenuItem();
   }
@@ -1660,7 +1762,12 @@
     // Shift is only enforced when asked for. Plenty of keys, "/" and "?" among
     // them, need shift on some layouts and not on others.
     if (hotkey.shift && !e.shiftKey) return false;
-    return (e.key || '').toLowerCase() === hotkey.key;
+    if ((e.key || '').toLowerCase() === hotkey.key) return true;
+    // A Mac Option combination reports the character the layout produces, not
+    // the letter that was pressed: Alt+S arrives as an es-zed. The physical key
+    // still names itself, so fall back to that.
+    if (hotkey.key.length !== 1 || !/^[a-z0-9]$/.test(hotkey.key)) return false;
+    return e.code === (/[0-9]/.test(hotkey.key) ? 'Digit' : 'Key') + hotkey.key.toUpperCase();
   }
 
   function isMac() {
@@ -1747,9 +1854,10 @@
     decorateSearchBox();
     refreshDark();
     var present = !!document.querySelector(SIGNIN_BUTTON);
-    if (CONFIG.fixSignIn) updateSignInWatch(present);
+    // Off means off: the poll has to be stopped, not just left unstarted.
+    updateSignInWatch(CONFIG.fixSignIn && present);
     watchTitle();
-    applyHostTitle();
+    syncHostTitle();
     updateHostBadge(present);
   }
 
@@ -1785,26 +1893,32 @@
 
   loadConfig();
 
-  if (CONFIG.scaleJquery) {
-    trapGlobal('jQuery', patchJquery);
-    trapGlobal('$', patchJquery);
-  }
+  if (CONFIG.scaleJquery) installJqueryPatch();
   if (CONFIG.scaleWebAnimations) patchWebAnimations();
   if (CONFIG.scaleTimeouts) patchTimeouts();
 
-  if (CONFIG.fixSignIn) {
-    document.addEventListener('input', onValueEvent, true);
-    document.addEventListener('change', onValueEvent, true);
-  }
+  // Always listening, and gated inside. Installing these from the config would
+  // mean the switch only took effect after a reload.
+  document.addEventListener('input', onValueEvent, true);
+  document.addEventListener('change', onValueEvent, true);
   document.addEventListener('keydown', onKeyDown, true);
 
   darkOn = !!CONFIG.darkMode;
 
-  observe();
-  document.addEventListener('DOMContentLoaded', function () {
+  function start() {
     if (darkOn) setDark(true, false);
     sweep();
-  });
+  }
+
+  observe();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    // The script is meant to run at document-start, but a userscript manager can
+    // be late and the extension can be installed into a page that is already
+    // open. Waiting for an event that has been and gone left dark mode off.
+    start();
+  }
   window.addEventListener('load', sweep);
   // The @import'ed sheet is not always parsed by DOMContentLoaded.
   [300, 1000, 3000].forEach(function (ms) {
@@ -1828,7 +1942,7 @@
       var out = ['streamliner ' + VERSION + ' dark audit on ' + location.host + location.hash];
       out.push('dark on: ' + darkOn + ', override sheet: ' +
                (darkEl ? darkEl.textContent.length + ' chars, disabled=' + darkEl.disabled : 'none'));
-      out.push('stylesheets: ' + document.styleSheets.length + ', built at count ' + darkBuiltAt);
+      out.push('stylesheets: ' + document.styleSheets.length + ', built at ' + darkBuiltAt);
 
       function toRgb(v) {
         var m = /rgba?\(([^)]+)\)/.exec(v || '');

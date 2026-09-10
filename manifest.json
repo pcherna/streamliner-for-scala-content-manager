@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Streamliner for Scala Content Manager",
-  "version": "1.35.0",
+  "version": "1.36.0",
   "description": "Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.",
   "content_scripts": [
     {
