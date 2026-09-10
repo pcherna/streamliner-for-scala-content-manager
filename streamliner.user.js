@@ -1,12 +1,16 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
-// @namespace    https://github.com/peter/cm-browser-helper
-// @version      1.32.0
+// @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
+// @version      1.34.0
 // @description  Autofill fix, faster animations, search hotkey, dark mode, text side menus and a settings panel.
 // @match        *://*/ContentManager/*
 // @run-at       document-start
 // @grant        none
 // @license      GPL-3.0-or-later
+// @homepageURL  https://github.com/pcherna/streamliner-for-scala-content-manager
+// @supportURL   https://github.com/pcherna/streamliner-for-scala-content-manager/issues
+// @downloadURL  https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js
+// @updateURL    https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js
 // ==/UserScript==
 
 // Streamliner. This one file is both a Tampermonkey userscript and the content script loaded
@@ -113,7 +117,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.32.0';
+  var VERSION = '1.34.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';

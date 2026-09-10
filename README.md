@@ -1,7 +1,10 @@
 # Streamliner for Scala Content Manager
 
 Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension and as a Tampermonkey userscript. Both run the same
-`cm-helper.user.js`.
+`streamliner.user.js`.
+
+Streamliner changes only what the browser renders. It does not modify the
+Content Manager server or any of its data.
 
 ## Use of AI Coding Tools
 
@@ -50,9 +53,12 @@ server. The script still only runs on `/ContentManager` paths.
 
 ## Install as a userscript
 
-1. Install Tampermonkey.
-2. Open `cm-helper.user.js`. Tampermonkey offers to install it.
+1. Install the [Tampermonkey extension](https://www.tampermonkey.net/).
+2. Open the [install link](https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js). Tampermonkey offers to install it.
 3. Reload any open Content Manager tab.
+
+Tampermonkey then keeps itself up to date. It rechecks that same URL and
+installs a new copy whenever the `@version` line goes up.
 
 ## Tested Versions
 
@@ -68,9 +74,6 @@ Scala Enterprise Content Manager is a product of [Scala](https://www.scala.com),
 and the Scala name and logo are their trademarks. Streamliner is an independent
 project. It is not affiliated with, endorsed by, or supported by Scala, and they
 are in no way responsible for it.
-
-Streamliner changes only what the browser renders. It does not modify the
-Content Manager server or any of its data.
 
 Disclaimer: I used to work there.
 

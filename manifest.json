@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Streamliner for Scala Content Manager",
-  "version": "1.32.0",
+  "version": "1.34.0",
   "description": "Autofill fix, faster animations, search hotkey, dark mode, text side menus and a settings panel.",
   "content_scripts": [
     {
@@ -10,7 +10,7 @@
         "*://*/ContentManager"
       ],
       "js": [
-        "cm-helper.user.js"
+        "streamliner.user.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
