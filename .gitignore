@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Chrome packs an unpacked extension into these when you use "Pack extension"
+*.crx
+*.pem
+
+# Local scratch
+*.local.js
+*.local.html
+NOTES.md
