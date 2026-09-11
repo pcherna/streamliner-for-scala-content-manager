@@ -26,6 +26,10 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 
 (Content Manager 12.50 and up) Lays out Content Manager's compact side menus using text-only, which is easier to identify than the original icons-only.
 
+### List Filters
+
+The various list filters only show the first several entries, with the rest hidden behind Show More. Now all choices are shown initially, in a box that scrolls.
+
 ### Focus Search
 
 Adds a keyboard shortcut to focus each page's search box. Defaults to `/`, but can be changed to for example `Ctrl+k` or `Cmd+k`

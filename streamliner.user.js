@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.36.0
+// @version      1.37.1
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -77,6 +77,10 @@
       'Player Updater Management': 'Player Updaters',
       'Scala Software Updates blog': 'Scala Updates blog'
     },
+    // Shows a long filter list in full, in a box that scrolls.
+    scrollListFilters: true,
+    listFilterHeight: '220px',
+
     // Dark mode is off until you turn it on. The choice is remembered per server.
     darkMode: false,
     // Lightens logo artwork so black ink does not vanish on a dark page. The
@@ -125,7 +129,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.36.0';
+  var VERSION = '1.37.1';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -771,7 +775,7 @@
 
   function applyPinnedMenu() {
     if (!CONFIG.textOnlyPinnedMenu) return;
-    if (!pinnedEl && (document.head || document.documentElement)) {
+    if ((!pinnedEl || !pinnedEl.isConnected) && (document.head || document.documentElement)) {
       pinnedEl = makeStyle('cm-helper-pinned');
       pinnedEl.textContent = PINNED_TEXT_CSS
         .split('%W%').join(CONFIG.pinnedMenuWidth)
@@ -809,6 +813,50 @@
       if (existing && existing.textContent.trim() !== full) existing.textContent = full;
       a.removeAttribute('data-cm-full');
     }
+  }
+
+  // ---------------------------------------------------------- list filters
+
+  // 12.00 and earlier cap a filter list at ten choices. The view adds
+  //   .choices.has-overflow .options { max-height: 165px; overflow-y: hidden }
+  // and hangs the rest behind a Show More link that sets max-height to none.
+  // That is a choice between a truncated list and a filter panel taller than
+  // the screen. A fixed box that scrolls beats both, so the cap becomes a
+  // scroll and the link goes.
+  //
+  // Only CSS is needed: every choice is already in the DOM, and the link only
+  // ever toggled a class. 13.50 dropped the whole mechanism, so these selectors
+  // match nothing there.
+  // The app's own rule is !important at the same specificity, so whichever
+  // sheet comes later in the document wins. That is not something to rely on:
+  // this sheet is written when the first sweep runs, and a stylesheet the app
+  // adds after that would beat it, leaving the list capped and unscrollable
+  // exactly as before. The leading `html body` buys two extra ids' worth of
+  // specificity, so the override wins wherever the sheet ends up sitting.
+  var FILTER_CSS = [
+    'html body .filters .inlineEdit .choices.has-overflow .options,',
+    'html body .filters .inlineEdit .choices.show-overflow .options {',
+    '  max-height: %H% !important; overflow-y: auto !important; }',
+    'html body .filters .inlineEdit a.toggle-filter-list { display: none !important; }'
+  ].join('\n');
+
+  var filtersEl = null;
+
+  function applyListFilters() {
+    if (!CONFIG.scrollListFilters) return;
+    // isConnected, not merely "we made one": a sheet that has been taken out of
+    // the document still answers to the variable, and the feature would then be
+    // silently off for the rest of the session.
+    if (filtersEl && filtersEl.isConnected) return;
+    if (!(document.head || document.documentElement)) return;
+    filtersEl = makeStyle('cm-helper-filters');
+    filtersEl.textContent = FILTER_CSS.split('%H%').join(CONFIG.listFilterHeight);
+    log('list filters set to scroll at ' + CONFIG.listFilterHeight);
+  }
+
+  function removeListFilters() {
+    if (filtersEl && filtersEl.parentNode) filtersEl.parentNode.removeChild(filtersEl);
+    filtersEl = null;
   }
 
   // ------------------------------------------------------------- dark mode
@@ -1346,6 +1394,7 @@
     scaleTimeouts: 'Also speeds up dialogs and menus on 13.x. Affects app timers, so try it before leaving it on.',
     fixSignIn: 'Only 11.x needs it. 13.x ships the button enabled.',
     pinnedMenuWidth: 'Wider menus take width from the page content.',
+    listFilterHeight: 'How tall a filter list may get before it scrolls.',
     searchHotkey: 'A key on its own, or with modifiers: "/", "cmd+k", "ctrl+k", "alt+s".',
     darkMode: 'Applies as soon as you save.',
     showHostBadge: 'Adds the host badge to the login page.',
@@ -1384,6 +1433,14 @@
              'menus using text-only, which is easier to identify than the original ' +
              'icons-only.',
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
+    },
+    {
+      title: 'List Filters',
+      master: 'scrollListFilters',
+      blurb: 'The various list filters only show the first several entries, with the rest ' +
+             'hidden behind Show More. Now all choices are shown initially, in a box that ' +
+             'scrolls.',
+      advanced: ['listFilterHeight']
     },
     {
       title: 'Focus Search',
@@ -1733,6 +1790,8 @@
     // Always torn down: the sweep rebuilds it when the feature is still on, and
     // labels are then recomputed from scratch.
     removePinnedMenu();
+    // Only a stylesheet, so taking it out is the whole teardown.
+    removeListFilters();
     // Let the placeholder hint pick up a changed hotkey. Every box that carries
     // one, not just the first: a second box gets decorated as soon as it is the
     // visible one, and both can be in the DOM at once.
@@ -1875,6 +1934,7 @@
     sweepQueued = false;
     if (CONFIG.scaleCss) applyCssScaling();
     applyPinnedMenu();
+    applyListFilters();
     installUserMenuItem();
     watchFonts();
     decorateSearchBox();
