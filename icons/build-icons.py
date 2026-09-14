@@ -12,9 +12,10 @@ with visible rounded ends, stacked at even spacing, read as a list icon instead
 of as motion. The mark carries a halo stroke in the background colour, which
 keeps it separate from the lines it covers.
 
-The 16 and 32 pixel icons come from a simplified master. The full master's
-third line, and the faint tail of the gradient, turn into a smudge below about
-40 pixels. The small master draws two heavier lines and scales the mark up.
+There is one master, and every size comes from it. An earlier version had a
+second, simplified master for the small sizes, which left the mark with three
+trails in chrome://extensions and two in the toolbar menu and the settings
+dialog. One master means one mark everywhere.
 
 Requires rsvg-convert and ImageMagick:
 
@@ -53,14 +54,23 @@ STEM = "M -11,-35 A 11,11 0 0 1 11,-35 L 6.5,1 A 6.5,6.5 0 0 1 -6.5,1 Z"
 DOT_R = 8.5
 STEM_HALF = 9.5  # average half-width of the stem, for the flank calculation
 
+# Gradient ids are namespaced because this markup is also inlined into Content
+# Manager's own page, where a bare id="g0" is one document-wide id among
+# thousands and url(#g0) resolves to whichever element happens to come first.
+ID = "streamliner-icon-"
+
 # Where the mark's parts land once the group is rotated 45 degrees, per unit of
 # scale, measured from the group origin.
 DOT_OFFSET = (-16.97, 16.97)
 INK_CENTRE = (5.14, -5.14)
 
 # Each speed line is (offset from the dot's y, thickness, opacity at the head).
-LINES_FULL = [(-38, 7, 0.42), (-19, 7, 0.62), (0, 7, 0.85)]
-LINES_SMALL = [(-21, 9, 0.62), (0, 9, 0.90)]
+# Three lines, and heavier than they want to be at 128, because they also have
+# to survive 32. An earlier set at thickness 7 with the faintest at 0.42 looked
+# better large and dissolved into haze small.
+LINES = [(-38, 8, 0.50), (-19, 8, 0.70), (0, 8, 0.92)]
+SCALE = 1.10
+CENTRE = (82, 64)
 
 LEFT = 13  # where the lines fade in from
 TUCK = 9   # how far each line runs under the mark
@@ -84,7 +94,7 @@ def master(lines, scale, centre):
         # The lowest line tucks under the dot; the rest under the stem.
         edge = dot_left if offset == 0 else left_flank(ox, oy, scale, y)
         gradients.append(
-            f'<linearGradient id="g{i}" x1="0" y1="0" x2="1" y2="0">'
+            f'<linearGradient id="{ID}g{i}" x1="0" y1="0" x2="1" y2="0">'
             f'<stop offset="0" stop-color="{LINE}" stop-opacity="0"/>'
             f'<stop offset="0.85" stop-color="{LINE}" stop-opacity="{opacity}"/>'
             f"</linearGradient>"
@@ -92,7 +102,7 @@ def master(lines, scale, centre):
         rects.append(
             f'<rect x="{LEFT}" y="{y - thickness / 2:.1f}" '
             f'width="{edge + TUCK - LEFT:.1f}" height="{thickness}" '
-            f'rx="{thickness / 2}" fill="url(#g{i})"/>'
+            f'rx="{thickness / 2}" fill="url(#{ID}g{i})"/>'
         )
 
     return (
@@ -109,21 +119,16 @@ def master(lines, scale, centre):
 
 
 def main():
-    masters = {
-        "icon.svg": (master(LINES_FULL, 1.08, (82, 64)), [128, 48]),
-        "icon-small.svg": (master(LINES_SMALL, 1.16, (80, 64)), [32, 16]),
-    }
-    for name, (svg, sizes) in masters.items():
-        svg_path = HERE / name
-        svg_path.write_text(svg)
-        for size in sizes:
-            png_path = HERE / f"icon{size}.png"
-            subprocess.run(
-                ["rsvg-convert", "-w", str(size), "-h", str(size),
-                 str(svg_path), "-o", str(png_path)],
-                check=True,
-            )
-            print(f"{svg_path.name} -> {png_path.name}")
+    svg_path = HERE / "icon.svg"
+    svg_path.write_text(master(LINES, SCALE, CENTRE))
+    for size in (128, 48, 32, 16):
+        png_path = HERE / f"icon{size}.png"
+        subprocess.run(
+            ["rsvg-convert", "-w", str(size), "-h", str(size),
+             str(svg_path), "-o", str(png_path)],
+            check=True,
+        )
+        print(f"{svg_path.name} -> {png_path.name}")
 
 
 if __name__ == "__main__":

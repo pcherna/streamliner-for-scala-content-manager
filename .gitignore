@@ -16,3 +16,6 @@
 *.local.js
 *.local.html
 NOTES.md
+
+# Python
+__pycache__/

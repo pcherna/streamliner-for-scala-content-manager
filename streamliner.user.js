@@ -1852,6 +1852,45 @@
     panel = null;
   }
 
+  // The extension icon, inlined. A userscript has no extension URL to point at,
+  // and the content script runs in the MAIN world where chrome.runtime does not
+  // exist either, so the artwork has to travel inside this file.
+  //
+  // It goes in as a real <svg> element, not an <img> with a data: URI. 13.50
+  // serves default-src 'self' with no data: in img-src, so a data: image is
+  // refused and draws as a broken icon. 11.07 sends no such policy, which is why
+  // this looked fine there. An inline <svg> is not an img-src fetch at all.
+  //
+  // This is icons/icon.svg with its formatting newlines collapsed to spaces,
+  // which renders identically. The gradient ids are namespaced in the build
+  // script because they land in Content Manager's own document here. Keep the
+  // two in step: regenerate with icons/build-icons.py if the artwork changes.
+  var ICON_SVG = [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">',
+    ' <defs>',
+    '<linearGradient id="streamliner-icon-g0" x1="0" y1="0" x2="1" y2="0">',
+    '<stop offset="0" stop-color="#fff" stop-opacity="0"/>',
+    '<stop offset="0.85" stop-color="#fff" stop-opacity="0.5"/>',
+    '</linearGradient>',
+    '<linearGradient id="streamliner-icon-g1" x1="0" y1="0" x2="1" y2="0">',
+    '<stop offset="0" stop-color="#fff" stop-opacity="0"/>',
+    '<stop offset="0.85" stop-color="#fff" stop-opacity="0.7"/>',
+    '</linearGradient>',
+    '<linearGradient id="streamliner-icon-g2" x1="0" y1="0" x2="1" y2="0">',
+    '<stop offset="0" stop-color="#fff" stop-opacity="0"/>',
+    '<stop offset="0.85" stop-color="#fff" stop-opacity="0.92"/>',
+    '</linearGradient></defs> ',
+    '<rect x="2" y="2" width="124" height="124" rx="28" fill="#3F454D"/> ',
+    '<rect x="13" y="46.3" width="76.9" height="8" rx="4.0" fill="url(#streamliner-icon-g0)"/>',
+    '<rect x="13" y="65.3" width="57.9" height="8" rx="4.0" fill="url(#streamliner-icon-g1)"/>',
+    '<rect x="13" y="84.3" width="44.3" height="8" rx="4.0" fill="url(#streamliner-icon-g2)"/>',
+    ' ',
+    '<g transform="translate(76.35,69.65) rotate(45) scale(1.1)" fill="#fff" stroke="#3F454D" stroke-width="9" paint-order="stroke">',
+    ' ',
+    '<path d="M -11,-35 A 11,11 0 0 1 11,-35 L 6.5,1 A 6.5,6.5 0 0 1 -6.5,1 Z"/>',
+    '<circle cx="0" cy="24" r="8.5"/> </g> </svg>'
+  ].join('');
+
   function openSettings() {
     if (panel) return;
     if (!document.body) return;
@@ -1877,7 +1916,9 @@
       'box-shadow:0 12px 48px rgba(0,0,0,.5);padding:0;';
 
     var head = document.createElement('div');
-    head.style.cssText = 'padding:16px 20px;border-bottom:1px solid ' + skin.line + ';' +
+    // The right padding is the icon's room. Without it a long host name in the
+    // scope line runs under the mark.
+    head.style.cssText = 'padding:16px 72px 16px 20px;border-bottom:1px solid ' + skin.line + ';' +
       'position:sticky;top:0;background:' + skin.card + ';';
     var title = document.createElement('div');
     title.style.cssText = 'font-size:15px;font-weight:650';
@@ -1894,6 +1935,22 @@
     scope.style.cssText = 'color:' + skin.muted + ';font-size:12px';
     scope.textContent = '(Settings apply to ' + window.location.host + ' only)';
     head.appendChild(scope);
+
+    // Sticky counts as positioned, so this anchors to the header without the
+    // header needing to be restructured. Decorative: the title already names it.
+    var mark = document.createElement('span');
+    mark.setAttribute('data-cm-helper', 'true');
+    mark.setAttribute('aria-hidden', 'true');
+    mark.style.cssText = 'position:absolute;top:14px;right:20px;width:40px;height:40px;';
+    mark.innerHTML = ICON_SVG;
+    // The file carries width and height of 128 for the PNG build. Inline, the
+    // box is 40, so let the viewBox do the scaling.
+    var markSvg = mark.firstChild;
+    if (markSvg && markSvg.setAttribute) {
+      markSvg.setAttribute('width', '40');
+      markSvg.setAttribute('height', '40');
+    }
+    head.appendChild(mark);
     card.appendChild(head);
 
     var body = document.createElement('div');
