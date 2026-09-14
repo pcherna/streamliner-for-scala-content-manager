@@ -10,6 +10,7 @@ Most features never contact the server. The features below read from the same
 API that the page itself uses, and they send GET requests only.
 
 * Template Usage
+* Bypass Usage Dialog
 
 To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down.
 
@@ -38,6 +39,10 @@ The various list filters only show the first several entries, with the rest hidd
 ### Template Usage
 
 Adds a Used: count to items in the template list, that links to those messages.
+
+### Bypass Usage Dialog
+
+Breaks a Used: count into its parts in the list, such as 2 channels and 1 message. Each part links straight to what it counts, instead of via the Usage Dialog.
 
 ### Focus Search
 

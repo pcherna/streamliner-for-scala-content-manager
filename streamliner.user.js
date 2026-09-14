@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.38.0
+// @version      1.39.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -86,6 +86,10 @@
     templateUsage: true,
     templateUsageConcurrency: 5,
 
+    // Spells the Used: breakdown out in the row and links each part, instead of
+    // going through Content Manager's dialog to reach the same links.
+    bypassUsageDialog: true,
+
     // Dark mode is off until you turn it on. The choice is remembered per server.
     darkMode: false,
     // Lightens logo artwork so black ink does not vanish on a dark page. The
@@ -134,7 +138,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.38.0';
+  var VERSION = '1.39.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -1011,12 +1015,24 @@
     label.textContent = 'Used:';
     li.appendChild(label);
 
+    // With the bypass on there is no dialog to open, so the line says what the
+    // dialog would have said and links where it would have linked.
+    var clauses = CONFIG.bypassUsageDialog
+      ? usageClauses(TEMPLATE_KIND, { messagesCount: count }, id) : null;
+    if (clauses) {
+      for (var c = 0; c < clauses.length; c++) {
+        if (c) li.appendChild(document.createTextNode(', '));
+        li.appendChild(clauseLink(clauses[c]));
+      }
+      return li;
+    }
+
     var a = document.createElement('a');
     a.className = 'usageCountValue';
     // The app uses a bare href="usage" and handles the click itself. Kept for
     // the styling that hangs off it; the click is ours.
     a.setAttribute('href', 'usage');
-    a.textContent = count === 1 ? '1 time' : count + ' times';
+    a.textContent = count === 1 ? '1\u00a0time' : count + '\u00a0times';
     a.addEventListener('click', function (e) {
       e.preventDefault();
       // The row behind the link has its own click handler. Without this the
@@ -1187,12 +1203,18 @@
     usageDialog = root;
   }
 
-  function removeTemplateUsage() {
-    closeUsageDialog();
+  // Just the injected lines. The counts behind them survive, so a redraw after
+  // a settings change costs nothing.
+  function dropUsageLines() {
     var marks = document.querySelectorAll('[' + USAGE_MARK + ']');
     for (var i = 0; i < marks.length; i++) {
       if (marks[i].parentNode) marks[i].parentNode.removeChild(marks[i]);
     }
+  }
+
+  function removeTemplateUsage() {
+    closeUsageDialog();
+    dropUsageLines();
     // Replies already on the wire must not land in the cleared caches.
     usageGeneration++;
     usageCounts = {};
@@ -1201,6 +1223,294 @@
     usageInuseWaiters = null;
     usageQueue.length = 0;
     usageActive = 0;
+  }
+
+  // --------------------------------------------- bypass the usage dialog
+
+  // Content Manager's "Used: 4 times" opens a dialog that does nothing but name
+  // the object types the item appears in, each one a link onward. It is a step
+  // with nothing in it, because those counts are already in the list payload
+  // before anyone clicks. This spells them out in the row instead:
+  //
+  //   Used: 3 messages
+  //   Used: 2 playlists, 3 channels, 1 message
+  //
+  // Each clause links where the dialog's own entry pointed, so the dialog is
+  // never needed. No extra round trip per row either: one batched call covers a
+  // whole page, the same call Content Manager already makes for itself.
+
+  var BYPASS_MARK = 'data-streamliner-bypass';
+  var BYPASS_HID = 'data-streamliner-hid';
+
+  function usageHash(route, filters) {
+    // One parameter, with the leading * the route parser wants. Passing filters=
+    // without it is ignored, and the page renders the whole unfiltered list with
+    // no error anywhere, which looks like it worked.
+    return route + '?*filters=' + encodeURIComponent(JSON.stringify(filters));
+  }
+
+  // Every route and key below was read off Content Manager's own dialog, one
+  // relationship at a time, because there is no pattern to infer them from. The
+  // naming disagrees with itself three ways: sub-playlist is "playlist" singular
+  // while channel is "playlists" plural, the channel route is "#channel/" though
+  // the list is "#channels", and media-to-messages carries a type discriminator
+  // that nothing else needs.
+  //
+  // Order here is the order the clauses read in: channel, then playlist, then
+  // message. Content Manager's own dialog lists them message, playlist, channel,
+  // so this is deliberately not a copy of it.
+  var USAGE_KINDS = [
+    {
+      name: 'template',
+      match: /^#\/?templates?(?:[\/?]|$)/,
+      // No list call: the template usage feature has already fetched these.
+      cats: [
+        { count: 'messagesCount', one: 'message', many: 'messages',
+          link: function (id) {
+            return usageHash('#media/', { templates: { values: [String(id)] } });
+          } }
+      ]
+    },
+    {
+      name: 'media',
+      match: /^#\/?media(?:[\/?]|$)/,
+      endpoint: 'media/search',
+      // Request names differ from response names here: usingMessagesCount comes
+      // back as messagesCount. On the playlist search below they agree.
+      fields: 'id,usingMessagesCount,usingPlaylistsCount',
+      cats: [
+        { count: 'playlistsCount', one: 'playlist', many: 'playlists',
+          link: function (id) {
+            return usageHash('#playlists/', { media: { values: [String(id)] } });
+          } },
+        { count: 'messagesCount', one: 'message', many: 'messages',
+          link: function (id) {
+            return usageHash('#media/', {
+              type: { values: ['MESSAGE'] }, media: { values: [String(id)] }
+            });
+          } }
+      ]
+      // usingTemplatesCount exists on this search and is always 0. Content
+      // Manager has no media-used-by-template relationship, so there is no
+      // category for it here.
+    },
+    {
+      name: 'playlist',
+      match: /^#\/?playlists(?:[\/?]|$)/,
+      endpoint: 'playlists/search',
+      fields: 'id,channelsCount,asSubPlaylistsCount,messagesCount',
+      cats: [
+        { count: 'channelsCount', one: 'channel', many: 'channels',
+          link: function (id) {
+            return usageHash('#channel/', { playlists: { values: [String(id)] } });
+          } },
+        { count: 'asSubPlaylistsCount', one: 'playlist', many: 'playlists',
+          link: function (id) {
+            return usageHash('#playlists/', { playlist: { values: [String(id)] } });
+          } },
+        // Read off the dialog like the rest, once a playlist existed with a
+        // message using it. Note what is absent: media-to-messages needs a
+        // type discriminator and this does not, presumably because only a
+        // message can hold a playlist, so there is nothing else to exclude.
+        { count: 'messagesCount', one: 'message', many: 'messages',
+          link: function (id) {
+            return usageHash('#media/', { playlists: { values: [String(id)] } });
+          } }
+      ]
+    }
+  ];
+
+  var TEMPLATE_KIND = USAGE_KINDS[0];
+
+  // Hover cannot be copied the way the resting look is: getComputedStyle only
+  // reports the state an element is actually in, and Content Manager's own
+  // sheets cannot be read from script because they arrive by @import from
+  // another origin, so cssRules throws. So the rule is written out here.
+  //
+  // !important because the resting text-decoration is copied inline off the
+  // app's anchor, and an inline value beats a plain rule.
+  var BYPASS_CSS = '.streamliner-usage-link:hover { text-decoration: underline !important; }';
+
+  var bypassEl = null;
+
+  function applyBypassCss() {
+    // isConnected, not merely "we made one": a sheet taken out of the document
+    // still answers to the variable, and hover would be dead for the session.
+    if (bypassEl && bypassEl.isConnected) return;
+    if (!(document.head || document.documentElement)) return;
+    bypassEl = makeStyle('cm-helper-bypass');
+    bypassEl.textContent = BYPASS_CSS;
+  }
+
+  var bypassCounts = {};      // row id -> the counts object from the list call
+  var bypassPending = false;
+  var bypassGeneration = 0;
+
+  function usageKind() {
+    if (!CONFIG.bypassUsageDialog) return null;
+    for (var i = 0; i < USAGE_KINDS.length; i++) {
+      if (USAGE_KINDS[i].match.test(location.hash)) return USAGE_KINDS[i];
+    }
+    return null;
+  }
+
+  // The clauses for one row, or null when any non-zero category has no link.
+  // A clause that reads as a link and goes nowhere is worse than the dialog this
+  // replaces, so an unmappable row is left alone and keeps its dialog.
+  function usageClauses(kind, counts, id) {
+    var out = [];
+    for (var i = 0; i < kind.cats.length; i++) {
+      var cat = kind.cats[i];
+      var n = counts[cat.count];
+      if (!n) continue;
+      if (!cat.link) return null;
+      out.push({
+        // Non-breaking space, so a clause never wraps between the number and
+        // the thing it counts. "2 playlists, 3 channels, 1 message" is three
+        // pairs, and a line break inside one of them reads as a different list.
+        text: n + '\u00a0' + (n === 1 ? cat.one : cat.many),
+        href: cat.link(id)
+      });
+    }
+    return out.length ? out : null;
+  }
+
+  // `model` is Content Manager's own anchor from the same row, when there is
+  // one. Its class is deliberately not reused on a row the app owns: the list
+  // view rewrites a.usageCountValue by selector whenever it re-renders a row,
+  // and a row whose duration is still being calculated is re-rendered on a poll.
+  // Our clause text was being replaced with the app's own "20 times" a second
+  // or two after it was drawn. So the look is copied off its anchor instead of
+  // borrowing the class that carries it.
+  //
+  // The template list has no app-owned line to collide with, and passes no
+  // model, so it keeps the class and gets the styling for free.
+  function clauseLink(clause, model) {
+    var a = document.createElement('a');
+    a.setAttribute('href', clause.href);
+    a.textContent = clause.text;
+    if (model) {
+      a.className = 'streamliner-usage-link';
+      var cs = window.getComputedStyle(model);
+      a.style.color = cs.color;
+      a.style.textDecoration = cs.textDecoration;
+      a.style.cursor = cs.cursor === 'auto' ? 'pointer' : cs.cursor;
+      a.style.fontWeight = cs.fontWeight;
+    } else {
+      a.className = 'usageCountValue';
+    }
+    // The row behind the link has its own click handler. Following a clause
+    // should not also select the row and arm the toolbar buttons.
+    a.addEventListener('click', function (e) { e.stopPropagation(); });
+    return a;
+  }
+
+  function bypassPath(kind, ids) {
+    // limit is the row count, never 0: 0 means unlimited on these endpoints.
+    return kind.endpoint + '?offset=0&limit=' + ids.length +
+      '&search=&sort=&count=0&filters=' +
+      encodeURIComponent(JSON.stringify({ id: { values: ids, comparator: 'eq' } })) +
+      '&facets=&listOnly=true&fields=' + kind.fields;
+  }
+
+  // Scoped to the row, and deliberately not to a column. The media and template
+  // lists put this in div.column.col3; the playlist list has no col3 at all and
+  // puts it in a col2. The row scope is what keeps the filter sidebar's own
+  // li.usage out of reach.
+  function rowUsageLi(row) {
+    return row.querySelector('li.usage');
+  }
+
+  function paintRowClauses(kind, row) {
+    var id = row.getAttribute('data-id');
+    var counts = bypassCounts[id];
+    if (!counts) return;
+    var li = rowUsageLi(row);
+    if (!li || li.getAttribute(BYPASS_MARK)) return;
+    var clauses = usageClauses(kind, counts, id);
+    if (!clauses) return;
+
+    // Read the look off the app's anchor before hiding it, then hide rather
+    // than remove, so switching the feature off puts its dialog back without a
+    // reload.
+    var own = li.querySelectorAll('a.usageCountValue');
+    var model = own.length ? own[0] : null;
+    var holder = document.createElement('span');
+    holder.setAttribute('data-cm-helper', 'true');
+    holder.setAttribute(BYPASS_MARK, 'clauses');
+    for (var k = 0; k < clauses.length; k++) {
+      if (k) holder.appendChild(document.createTextNode(', '));
+      holder.appendChild(clauseLink(clauses[k], model));
+    }
+    for (var i = 0; i < own.length; i++) {
+      own[i].setAttribute(BYPASS_HID, own[i].style.display || '');
+      own[i].style.display = 'none';
+    }
+    li.appendChild(holder);
+    li.setAttribute(BYPASS_MARK, 'done');
+  }
+
+  function applyBypassUsage() {
+    var kind = usageKind();
+    // The template list is handled where its line is built, not here. Its
+    // clauses keep the app's own class, so they get its hover for free.
+    if (!kind || !kind.endpoint) return;
+    applyBypassCss();
+    var rows = document.querySelectorAll(USAGE_ROWS);
+    if (!rows.length) return;
+
+    var pending = [];
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute('data-id');
+      if (!id) continue;
+      // No line at all means the item is unused, and there is nothing to say.
+      var li = rowUsageLi(rows[i]);
+      if (!li || li.getAttribute(BYPASS_MARK)) continue;
+      if (Object.prototype.hasOwnProperty.call(bypassCounts, id)) {
+        paintRowClauses(kind, rows[i]);
+        continue;
+      }
+      pending.push(id);
+    }
+    if (!pending.length || bypassPending) return;
+
+    bypassPending = true;
+    var gen = bypassGeneration;
+    usageGet(bypassPath(kind, pending), function (data) {
+      if (gen !== bypassGeneration) return;
+      bypassPending = false;
+      var list = (data && data.list) || [];
+      for (var k = 0; k < list.length; k++) {
+        bypassCounts[String(list[k].id)] = list[k];
+      }
+      // Anything the call did not answer for is recorded empty, so the next
+      // sweep does not queue it again and again.
+      for (var m = 0; m < pending.length; m++) {
+        if (!Object.prototype.hasOwnProperty.call(bypassCounts, pending[m])) {
+          bypassCounts[pending[m]] = {};
+        }
+      }
+      applyBypassUsage();
+    });
+  }
+
+  function removeBypassUsage() {
+    var holders = document.querySelectorAll('[' + BYPASS_MARK + '="clauses"]');
+    for (var i = 0; i < holders.length; i++) {
+      if (holders[i].parentNode) holders[i].parentNode.removeChild(holders[i]);
+    }
+    var hidden = document.querySelectorAll('[' + BYPASS_HID + ']');
+    for (var k = 0; k < hidden.length; k++) {
+      hidden[k].style.display = hidden[k].getAttribute(BYPASS_HID);
+      hidden[k].removeAttribute(BYPASS_HID);
+    }
+    var marked = document.querySelectorAll('[' + BYPASS_MARK + '="done"]');
+    for (var m = 0; m < marked.length; m++) marked[m].removeAttribute(BYPASS_MARK);
+    if (bypassEl && bypassEl.parentNode) bypassEl.parentNode.removeChild(bypassEl);
+    bypassEl = null;
+    bypassGeneration++;
+    bypassCounts = {};
+    bypassPending = false;
   }
 
   // ------------------------------------------------------------- dark mode
@@ -1795,6 +2105,14 @@
       advanced: ['templateUsageConcurrency']
     },
     {
+      title: 'Bypass Usage Dialog',
+      master: 'bypassUsageDialog',
+      blurb: 'Breaks a Used: count into its parts in the list, such as 2 channels and ' +
+             '1 message. Each part links straight to what it counts, instead of via the ' +
+             'Usage Dialog.',
+      advanced: []
+    },
+    {
       title: 'Focus Search',
       master: 'focusSearch',
       blurb: 'Adds a keyboard shortcut to focus each page\'s search box.',
@@ -2207,6 +2525,10 @@
     // setting here changes a count, so the cache survives and the sweep
     // repaints from it.
     if (!CONFIG.templateUsage) removeTemplateUsage();
+    // Dropped either way, because the bypass changes how the line reads. The
+    // counts stay cached, so the sweep redraws both without a single request.
+    else dropUsageLines();
+    removeBypassUsage();
     // Let the placeholder hint pick up a changed hotkey. Every box that carries
     // one, not just the first: a second box gets decorated as soon as it is the
     // visible one, and both can be in the DOM at once.
@@ -2351,6 +2673,7 @@
     applyPinnedMenu();
     applyListFilters();
     applyTemplateUsage();
+    applyBypassUsage();
     installUserMenuItem();
     watchFonts();
     decorateSearchBox();
