@@ -59,6 +59,13 @@ That is because the match pattern `*://*/ContentManager/*` puts the wildcard in
 the host position, so colleagues do not have to edit anything for their own
 server. The script still only runs on `/ContentManager` paths.
 
+Chrome adds a Streamliner button to its extensions menu. Click it to see the
+version number and a reminder of where the settings are. The button has no
+controls of its own. Settings stay on the Content Manager page, under your
+username.
+
+Pin the button to the toolbar if you want it in view.
+
 ### Install as a userscript
 
 1. Install the [Tampermonkey extension](https://www.tampermonkey.net/).
@@ -82,6 +89,9 @@ Scala Enterprise Content Manager is a product of [Scala](https://www.scala.com),
 and the Scala name and logo are their trademarks. Streamliner is an independent
 project. It is not affiliated with, endorsed by, or supported by Scala, and they
 are in no way responsible for it.
+
+The Streamliner icon is my own artwork. It is not the Scala logo, and it is not
+derived from any Scala file.
 
 Disclaimer: I used to work there.
 

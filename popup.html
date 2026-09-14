@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Streamliner</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #5a6169;
+    --rule: #e3e6ea;
+    --link: #0a58ca;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #292d33;
+      --fg: #e9ecef;
+      --muted: #a8b0b8;
+      --rule: #3f454d;
+      --link: #7fb3ff;
+    }
+  }
+  body {
+    width: 288px;
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header { display: flex; align-items: center; gap: 10px; }
+  header img { width: 32px; height: 32px; }
+  h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  .version { margin: 0; color: var(--muted); font-size: 12px; }
+  p { margin: 12px 0 0; }
+  .steps { margin: 8px 0 0; padding-left: 18px; color: var(--muted); }
+  .steps li { margin: 3px 0; }
+  footer {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid var(--rule);
+    font-size: 12px;
+  }
+  a { color: var(--link); }
+</style>
+</head>
+<body>
+  <header>
+    <img src="icons/icon48.png" alt="">
+    <div>
+      <h1>Streamliner</h1>
+      <p class="version">Version <span id="version"></span></p>
+    </div>
+  </header>
+
+  <p>Streamliner runs on Content Manager pages. It has no controls here.</p>
+
+  <p>To change settings:</p>
+  <ol class="steps">
+    <li>Open a Content Manager page.</li>
+    <li>Click your username at the top right.</li>
+    <li>Click <strong>Streamliner Settings</strong>.</li>
+  </ol>
+
+  <footer>
+    <a id="repo" href="https://github.com/pcherna/streamliner-for-scala-content-manager"
+       target="_blank" rel="noreferrer">Readme and source</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
