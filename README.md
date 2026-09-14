@@ -6,6 +6,11 @@ Streamliner provides various conveniences and fixes for Scala Content Manager, p
 Streamliner changes only what the browser renders. It does not modify the
 Content Manager server or any of its data.
 
+Most features never contact the server. The features below read from the same
+API that the page itself uses, and they send GET requests only.
+
+* Template Usage
+
 To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down.
 
 ## Use of AI Coding Tools
@@ -29,6 +34,10 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 ### List Filters
 
 The various list filters only show the first several entries, with the rest hidden behind Show More. Now all choices are shown initially, in a box that scrolls.
+
+### Template Usage
+
+Adds a Used: count to items in the template list, that links to those messages.
 
 ### Focus Search
 

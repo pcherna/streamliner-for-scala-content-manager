@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.37.1
+// @version      1.38.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -81,6 +81,11 @@
     scrollListFilters: true,
     listFilterHeight: '220px',
 
+    // Adds the "Used:" line the template list is missing. Costs one request
+    // per list page, plus one per template that actually has messages.
+    templateUsage: true,
+    templateUsageConcurrency: 5,
+
     // Dark mode is off until you turn it on. The choice is remembered per server.
     darkMode: false,
     // Lightens logo artwork so black ink does not vanish on a dark page. The
@@ -129,7 +134,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.37.1';
+  var VERSION = '1.38.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -859,6 +864,345 @@
     filtersEl = null;
   }
 
+  // --------------------------------------------------------- template usage
+
+  // Content Manager puts "Used: n times" on media list rows and nothing on the
+  // template list, although the relationship exists and the filtered view the
+  // link would point at already works.
+  //
+  // Two calls cover a page. templates/inuse returns every template that has
+  // messages created from it, so one request settles used-or-not for every row
+  // at once. Only the used rows then need a number, which is the resultCount of
+  // a media search filtered to that template.
+  //
+  // The counts the API already carries look like the answer and are not.
+  // usingMessagesCount is accepted by both templates/search and templates/inuse
+  // and comes back 0 for every template on 11.07, 12.x and 13.50 alike,
+  // including templates with dozens of messages. It is wrong, not empty.
+
+  var USAGE_MARK = 'data-streamliner-usage';
+  var USAGE_ROWS = 'ul.basic > li.columns.item';
+  // Scoped to a row on purpose. A li.usage also sits in the filter sidebar on
+  // every version, and a bare li.usage selector finds that one first.
+  var USAGE_LIST = 'div.column.col3 > ul';
+  var USAGE_TTL_MS = 60000;
+
+  var usageCounts = {};       // template id -> number, or null while in flight
+  var usageInuse = null;      // template id -> true
+  var usageInuseAt = 0;
+  var usageInuseWaiters = null;
+  var usageQueue = [];
+  var usageActive = 0;
+  // Bumped on teardown, so a reply from a request started before the feature
+  // was switched off cannot write into the caches it just cleared.
+  var usageGeneration = 0;
+  var usageDialog = null;
+
+  // The match pattern puts the wildcard in the host position, so the path is
+  // all that identifies the app. Read it rather than assuming /ContentManager/
+  // sits at the root.
+  function usageApiBase() {
+    var m = location.pathname.match(/^(.*\/ContentManager)(?:\/|$)/);
+    return m ? m[1] + '/api/rest/' : null;
+  }
+
+  // XMLHttpRequest rather than fetch, to stay with the rest of the file.
+  // Nothing else here uses a Promise.
+  function usageGet(path, done) {
+    var base = usageApiBase();
+    if (!base) { done(null); return; }
+    var xhr = new XMLHttpRequest();
+    try { xhr.open('GET', base + path, true); } catch (e) { done(null); return; }
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status < 200 || xhr.status >= 300) { done(null); return; }
+      var data = null;
+      try { data = JSON.parse(xhr.responseText); } catch (e) { /* not json */ }
+      done(data);
+    };
+    try { xhr.send(); } catch (e) { done(null); }
+  }
+
+  // The default page size is 10, so the limit is not optional.
+  function usageInusePath() {
+    return 'templates/inuse?offset=0&limit=5000&fields=id';
+  }
+
+  // limit=1, never 0: limit=0 means unlimited here and returns every row.
+  // Only resultCount is wanted, so ask for the smallest page and one field.
+  function usageCountPath(id) {
+    var filters = JSON.stringify({ templates: { values: [String(id)] }, workgroups: null });
+    return 'media/search?offset=0&limit=1&search=&sort=&count=0'
+      + '&filters=' + encodeURIComponent(filters)
+      + '&facets=&listOnly=true&fields=id';
+  }
+
+  // Modelled on Content Manager's own media Used link, which is
+  //   #playlists/?*filters={"media":{"values":["1780674"]}}
+  // One parameter, with the leading * the route parser wants. Dropping the *
+  // and passing filters= alone is ignored: you get the whole unfiltered list,
+  // with no error anywhere, which looks like a working page.
+  function usageMediaHash(id) {
+    var filters = JSON.stringify({ templates: { values: [String(id)] } });
+    return '#media/?*filters=' + encodeURIComponent(filters);
+  }
+
+  // No router to ask, and the hash can carry list state after the route name.
+  function onTemplateList() {
+    return /^#\/?templates?(?:[\/?]|$)/.test(location.hash);
+  }
+
+  function usageConcurrency() {
+    var n = parseInt(CONFIG.templateUsageConcurrency, 10);
+    return n > 0 ? n : 5;
+  }
+
+  function usagePump() {
+    while (usageActive < usageConcurrency() && usageQueue.length) {
+      (function (id, gen) {
+        usageActive++;
+        usageGet(usageCountPath(id), function (data) {
+          // Generation first. Teardown has already zeroed the counter, so
+          // decrementing here would drive it negative and let the next run
+          // exceed the concurrency cap.
+          if (gen !== usageGeneration) return;
+          usageActive--;
+          usageCounts[id] = data && typeof data.resultCount === 'number' ? data.resultCount : 0;
+          usagePaint(id);
+          usagePump();
+        });
+      }(usageQueue.shift(), usageGeneration));
+    }
+  }
+
+  function withUsageInuse(done) {
+    if (usageInuse && Date.now() - usageInuseAt < USAGE_TTL_MS) { done(usageInuse); return; }
+    if (usageInuseWaiters) { usageInuseWaiters.push(done); return; }
+    usageInuseWaiters = [done];
+    var gen = usageGeneration;
+    usageGet(usageInusePath(), function (data) {
+      var waiters = usageInuseWaiters;
+      usageInuseWaiters = null;
+      if (gen !== usageGeneration) return;
+      var map = null;
+      if (data && data.list) {
+        map = {};
+        for (var i = 0; i < data.list.length; i++) map[String(data.list[i].id)] = true;
+        usageInuse = map;
+        usageInuseAt = Date.now();
+      }
+      // A null map means the call failed. Every row then falls through to its
+      // own count request, which is slower but still right.
+      for (var k = 0; k < waiters.length; k++) waiters[k](map);
+    });
+  }
+
+  // Content Manager's markup, class for class, so the app's own stylesheet
+  // draws it and the line matches the media list on every version.
+  function usageLine(id, count) {
+    var li = document.createElement('li');
+    li.className = 'usage';
+    // Without data-cm-helper the global observer reads this as an app change
+    // and sweeps forever.
+    li.setAttribute('data-cm-helper', 'true');
+    li.setAttribute(USAGE_MARK, String(id));
+
+    var label = document.createElement('label');
+    label.textContent = 'Used:';
+    li.appendChild(label);
+
+    var a = document.createElement('a');
+    a.className = 'usageCountValue';
+    // The app uses a bare href="usage" and handles the click itself. Kept for
+    // the styling that hangs off it; the click is ours.
+    a.setAttribute('href', 'usage');
+    a.textContent = count === 1 ? '1 time' : count + ' times';
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      // The row behind the link has its own click handler. Without this the
+      // count both opens the dialog and selects the template, which puts a
+      // selectedIds in the URL and arms the Delete button.
+      e.stopPropagation();
+      openUsageDialog(id, count);
+    });
+    li.appendChild(a);
+    return li;
+  }
+
+  function usagePaint(id) {
+    var count = usageCounts[id];
+    if (count === null || count === undefined) return;
+    // Zero draws nothing at all, the same as a media row with no usage.
+    if (!count) return;
+    var rows = document.querySelectorAll(USAGE_ROWS);
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].getAttribute('data-id') !== String(id)) continue;
+      if (rows[i].querySelector('[' + USAGE_MARK + ']')) continue;
+      var list = rows[i].querySelector(USAGE_LIST);
+      if (list) list.appendChild(usageLine(id, count));
+    }
+  }
+
+  function applyTemplateUsage() {
+    if (!CONFIG.templateUsage) return;
+    if (!onTemplateList()) return;
+    var rows = document.querySelectorAll(USAGE_ROWS);
+    if (!rows.length) return;
+
+    var pending = [];
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i].getAttribute('data-id');
+      if (!id) continue;
+      if (rows[i].querySelector('[' + USAGE_MARK + ']')) continue;
+      // Known already. Re-render after a sort or a page turn costs no request.
+      if (Object.prototype.hasOwnProperty.call(usageCounts, id)) { usagePaint(id); continue; }
+      pending.push(id);
+    }
+    if (!pending.length) return;
+
+    withUsageInuse(function (inuse) {
+      for (var k = 0; k < pending.length; k++) {
+        var id = pending[k];
+        if (Object.prototype.hasOwnProperty.call(usageCounts, id)) continue;
+        if (inuse && !inuse[id]) {
+          // Not in use, so there is nothing to ask and nothing to draw.
+          // Recorded so the row is not queued again on the next sweep.
+          usageCounts[id] = 0;
+          continue;
+        }
+        usageCounts[id] = null;
+        usageQueue.push(id);
+      }
+      usagePump();
+    });
+  }
+
+  function closeUsageDialog() {
+    if (usageDialog && usageDialog.parentNode) usageDialog.parentNode.removeChild(usageDialog);
+    usageDialog = null;
+    if (document.body) document.body.classList.remove('scrollKiller');
+    document.removeEventListener('keydown', onUsageDialogKey, true);
+  }
+
+  function onUsageDialogKey(e) {
+    if (e.key === 'Escape' || e.keyCode === 27) closeUsageDialog();
+  }
+
+  function usageEl(tag, cls) {
+    var el = document.createElement(tag);
+    if (cls) el.className = cls;
+    return el;
+  }
+
+  // Rebuilt rather than borrowed. There is no templates/usage endpoint to call
+  // and no app entry point to reach, so this copies the media dialog exactly:
+  // same tags, same classes, and the same inline styles the app writes.
+  //
+  // The inline styles are not decoration. The stylesheet leaves .modal and
+  // .screen at display:none, and the app reveals and positions them by hand, so
+  // a dialog built without them lands in the DOM and never appears. That is how
+  // the first version of this failed.
+  function openUsageDialog(id, count) {
+    closeUsageDialog();
+
+    var root = usageEl('div', 'usage');
+    root.setAttribute('data-cm-helper', 'true');
+    var container = usageEl('div', 'modalContainer');
+    root.appendChild(container);
+
+    // The backdrop covers the whole document, not just the viewport.
+    var screen = usageEl('div', 'screen');
+    var doc = document.documentElement;
+    screen.style.width = doc.scrollWidth + 'px';
+    screen.style.height = doc.scrollHeight + 'px';
+    screen.style.display = 'block';
+    screen.addEventListener('click', closeUsageDialog);
+    container.appendChild(screen);
+
+    var modal = usageEl('div', 'modal');
+    // The app sizes this as the viewport less a margin. On a 1280 wide window
+    // it writes 1200px, which is where the 80 comes from.
+    var width = Math.max(320, window.innerWidth - 80);
+    modal.style.width = width + 'px';
+    modal.style.display = 'block';
+    container.appendChild(modal);
+
+    var header = usageEl('div', 'header');
+    var h4 = document.createElement('h4');
+    h4.textContent = 'Usage';
+    header.appendChild(h4);
+    var close = usageEl('a', 'close');
+    close.setAttribute('href', '#');
+    close.textContent = '[ x ]';
+    close.addEventListener('click', function (e) { e.preventDefault(); closeUsageDialog(); });
+    header.appendChild(close);
+    modal.appendChild(header);
+
+    // Empty placeholders the app's own dialog carries. 13.50 adds warning and
+    // the older two do not, and an empty div costs nothing on either.
+    modal.appendChild(usageEl('div', 'error'));
+    modal.appendChild(usageEl('div', 'info'));
+    modal.appendChild(usageEl('div', 'warning'));
+
+    var content = usageEl('section', 'content');
+    content.style.overflow = 'auto';
+    var inner = usageEl('div', null);
+    var p = document.createElement('p');
+    p.textContent = 'This item is in use in the following:';
+    inner.appendChild(p);
+    var ul = document.createElement('ul');
+    var li = document.createElement('li');
+    var link = document.createElement('a');
+    link.setAttribute('href', usageMediaHash(id));
+    link.textContent = count === 1 ? '1 Message' : count + ' Messages';
+    link.addEventListener('click', closeUsageDialog);
+    li.appendChild(link);
+    ul.appendChild(li);
+    inner.appendChild(ul);
+    content.appendChild(inner);
+    modal.appendChild(content);
+
+    var footer = document.createElement('footer');
+    var actions = usageEl('div', 'actions');
+    // The app also carries an a.cancel here and hides it. Leaving it out is the
+    // same thing on screen, without depending on whatever does the hiding.
+    var ok = usageEl('button', 'button-primary save');
+    ok.textContent = 'OK';
+    ok.addEventListener('click', function (e) { e.preventDefault(); closeUsageDialog(); });
+    actions.appendChild(ok);
+    footer.appendChild(actions);
+    modal.appendChild(footer);
+
+    document.body.appendChild(root);
+    // Both measured, never assumed, and only once it is in the document and
+    // displayed. The width set above is a request the stylesheet can overrule:
+    // 13.50 caps it, so centring on the number we asked for rather than the
+    // number we got left the dialog sitting against the left edge.
+    modal.style.left = (window.pageXOffset +
+      Math.max(0, (window.innerWidth - modal.offsetWidth) / 2)) + 'px';
+    modal.style.top = (window.pageYOffset +
+      Math.max(0, (window.innerHeight - modal.offsetHeight) / 2)) + 'px';
+    document.body.classList.add('scrollKiller');
+    document.addEventListener('keydown', onUsageDialogKey, true);
+    usageDialog = root;
+  }
+
+  function removeTemplateUsage() {
+    closeUsageDialog();
+    var marks = document.querySelectorAll('[' + USAGE_MARK + ']');
+    for (var i = 0; i < marks.length; i++) {
+      if (marks[i].parentNode) marks[i].parentNode.removeChild(marks[i]);
+    }
+    // Replies already on the wire must not land in the cleared caches.
+    usageGeneration++;
+    usageCounts = {};
+    usageInuse = null;
+    usageInuseAt = 0;
+    usageInuseWaiters = null;
+    usageQueue.length = 0;
+    usageActive = 0;
+  }
+
   // ------------------------------------------------------------- dark mode
 
   // A real dark theme, not a filter. Applying `filter: invert()` to <html>
@@ -1395,6 +1739,7 @@
     fixSignIn: 'Only 11.x needs it. 13.x ships the button enabled.',
     pinnedMenuWidth: 'Wider menus take width from the page content.',
     listFilterHeight: 'How tall a filter list may get before it scrolls.',
+    templateUsageConcurrency: 'How many usage counts to fetch at once. Higher is faster and leans harder on the server.',
     searchHotkey: 'A key on its own, or with modifiers: "/", "cmd+k", "ctrl+k", "alt+s".',
     darkMode: 'Applies as soon as you save.',
     showHostBadge: 'Adds the host badge to the login page.',
@@ -1441,6 +1786,13 @@
              'hidden behind Show More. Now all choices are shown initially, in a box that ' +
              'scrolls.',
       advanced: ['listFilterHeight']
+    },
+    {
+      title: 'Template Usage',
+      master: 'templateUsage',
+      blurb: 'Adds a Used: count to items in the template list, that links to those ' +
+             'messages.',
+      advanced: ['templateUsageConcurrency']
     },
     {
       title: 'Focus Search',
@@ -1792,6 +2144,12 @@
     removePinnedMenu();
     // Only a stylesheet, so taking it out is the whole teardown.
     removeListFilters();
+    // Torn down only when it is off, unlike the two above. Those rebuild from
+    // a stylesheet and cost nothing. This one would re-fetch every count, so
+    // saving any setting at all would fire a request per used template. No
+    // setting here changes a count, so the cache survives and the sweep
+    // repaints from it.
+    if (!CONFIG.templateUsage) removeTemplateUsage();
     // Let the placeholder hint pick up a changed hotkey. Every box that carries
     // one, not just the first: a second box gets decorated as soon as it is the
     // visible one, and both can be in the DOM at once.
@@ -1935,6 +2293,7 @@
     if (CONFIG.scaleCss) applyCssScaling();
     applyPinnedMenu();
     applyListFilters();
+    applyTemplateUsage();
     installUserMenuItem();
     watchFonts();
     decorateSearchBox();
