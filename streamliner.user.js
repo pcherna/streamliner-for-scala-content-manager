@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.39.0
+// @version      1.40.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -138,7 +138,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.39.0';
+  var VERSION = '1.40.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -1259,13 +1259,16 @@
   // Order here is the order the clauses read in: channel, then playlist, then
   // message. Content Manager's own dialog lists them message, playlist, channel,
   // so this is deliberately not a copy of it.
+  //
+  // Type names are title-cased because that is how the app writes them, both in
+  // the dialog and in the channel list's own "Used in: 1 Player".
   var USAGE_KINDS = [
     {
       name: 'template',
       match: /^#\/?templates?(?:[\/?]|$)/,
       // No list call: the template usage feature has already fetched these.
       cats: [
-        { count: 'messagesCount', one: 'message', many: 'messages',
+        { count: 'messagesCount', one: 'Message', many: 'Messages',
           link: function (id) {
             return usageHash('#media/', { templates: { values: [String(id)] } });
           } }
@@ -1279,11 +1282,11 @@
       // back as messagesCount. On the playlist search below they agree.
       fields: 'id,usingMessagesCount,usingPlaylistsCount',
       cats: [
-        { count: 'playlistsCount', one: 'playlist', many: 'playlists',
+        { count: 'playlistsCount', one: 'Playlist', many: 'Playlists',
           link: function (id) {
             return usageHash('#playlists/', { media: { values: [String(id)] } });
           } },
-        { count: 'messagesCount', one: 'message', many: 'messages',
+        { count: 'messagesCount', one: 'Message', many: 'Messages',
           link: function (id) {
             return usageHash('#media/', {
               type: { values: ['MESSAGE'] }, media: { values: [String(id)] }
@@ -1300,11 +1303,11 @@
       endpoint: 'playlists/search',
       fields: 'id,channelsCount,asSubPlaylistsCount,messagesCount',
       cats: [
-        { count: 'channelsCount', one: 'channel', many: 'channels',
+        { count: 'channelsCount', one: 'Channel', many: 'Channels',
           link: function (id) {
             return usageHash('#channel/', { playlists: { values: [String(id)] } });
           } },
-        { count: 'asSubPlaylistsCount', one: 'playlist', many: 'playlists',
+        { count: 'asSubPlaylistsCount', one: 'Playlist', many: 'Playlists',
           link: function (id) {
             return usageHash('#playlists/', { playlist: { values: [String(id)] } });
           } },
@@ -1312,13 +1315,30 @@
         // message using it. Note what is absent: media-to-messages needs a
         // type discriminator and this does not, presumably because only a
         // message can hold a playlist, so there is nothing else to exclude.
-        { count: 'messagesCount', one: 'message', many: 'messages',
+        { count: 'messagesCount', one: 'Message', many: 'Messages',
           link: function (id) {
             return usageHash('#media/', { playlists: { values: [String(id)] } });
           } }
       ]
     }
   ];
+
+  // The channel list is the odd one. It writes the count and the type straight
+  // into the line as "Used in: 1 Player" rather than "3 times", so there is
+  // nothing to fetch and nothing to reword: the text is copied as the app wrote
+  // it and only the destination changes.
+  //
+  // Worth knowing that this is an improvement rather than a shortcut. The app's
+  // own dialog links to a bare "#player" with no filter at all, so it names one
+  // player and then hands you all of them. This links to that player.
+  USAGE_KINDS.push({
+    name: 'channel',
+    match: /^#\/?channels?(?:[\/?]|$)/,
+    copyText: true,
+    link: function (id) {
+      return usageHash('#player/', { channels: { values: [String(id)] } });
+    }
+  });
 
   var TEMPLATE_KIND = USAGE_KINDS[0];
 
@@ -1421,19 +1441,17 @@
     return row.querySelector('li.usage');
   }
 
-  function paintRowClauses(kind, row) {
-    var id = row.getAttribute('data-id');
-    var counts = bypassCounts[id];
-    if (!counts) return;
-    var li = rowUsageLi(row);
-    if (!li || li.getAttribute(BYPASS_MARK)) return;
-    var clauses = usageClauses(kind, counts, id);
-    if (!clauses) return;
+  // Every anchor in the line, not a.usageCountValue: the channel list's anchor
+  // carries no class at all. The line holds a label and the anchor and nothing
+  // else, and this runs before our own holder is added, so a bare `a` is safe.
+  function ownAnchors(li) {
+    return li.querySelectorAll('a');
+  }
 
+  function paintClauses(li, clauses, own) {
     // Read the look off the app's anchor before hiding it, then hide rather
     // than remove, so switching the feature off puts its dialog back without a
     // reload.
-    var own = li.querySelectorAll('a.usageCountValue');
     var model = own.length ? own[0] : null;
     var holder = document.createElement('span');
     holder.setAttribute('data-cm-helper', 'true');
@@ -1450,12 +1468,44 @@
     li.setAttribute(BYPASS_MARK, 'done');
   }
 
+  function paintRowClauses(kind, row) {
+    var id = row.getAttribute('data-id');
+    var counts = bypassCounts[id];
+    if (!counts) return;
+    var li = rowUsageLi(row);
+    if (!li || li.getAttribute(BYPASS_MARK)) return;
+    var clauses = usageClauses(kind, counts, id);
+    if (!clauses) return;
+    paintClauses(li, clauses, ownAnchors(li));
+  }
+
+  // The copy-text kinds already read correctly, so the app's own wording is
+  // reused verbatim and only the link changes.
+  function paintCopiedClause(kind, row) {
+    var id = row.getAttribute('data-id');
+    if (!id) return;
+    var li = rowUsageLi(row);
+    if (!li || li.getAttribute(BYPASS_MARK)) return;
+    var own = ownAnchors(li);
+    if (!own.length) return;
+    var text = own[0].textContent.replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    paintClauses(li, [{ text: text, href: kind.link(id) }], own);
+  }
+
   function applyBypassUsage() {
     var kind = usageKind();
     // The template list is handled where its line is built, not here. Its
     // clauses keep the app's own class, so they get its hover for free.
-    if (!kind || !kind.endpoint) return;
+    if (!kind || (!kind.endpoint && !kind.copyText)) return;
     applyBypassCss();
+
+    // Nothing to fetch: the count and the type are already in the line.
+    if (kind.copyText) {
+      var owned = document.querySelectorAll(USAGE_ROWS);
+      for (var c = 0; c < owned.length; c++) paintCopiedClause(kind, owned[c]);
+      return;
+    }
     var rows = document.querySelectorAll(USAGE_ROWS);
     if (!rows.length) return;
 
@@ -2107,8 +2157,8 @@
     {
       title: 'Bypass Usage Dialog',
       master: 'bypassUsageDialog',
-      blurb: 'Breaks a Used: count into its parts in the list, such as 2 channels and ' +
-             '1 message. Each part links straight to what it counts, instead of via the ' +
+      blurb: 'Breaks a Used: count into its parts in the list, such as 2 Channels and ' +
+             '1 Message. Each part links straight to what it counts, instead of via the ' +
              'Usage Dialog.',
       advanced: []
     },
