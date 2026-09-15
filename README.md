@@ -1,13 +1,12 @@
 # Streamliner for Scala Content Manager
 
-Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension and as a Tampermonkey userscript. Both run the same
+Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension and as a userscript. Both run the same
 `streamliner.user.js`.
 
-Streamliner changes only what the browser renders. It does not modify the
-Content Manager server or any of its data.
-
-Most features never contact the server. The features below read from the same
-API that the page itself uses, and they send GET requests only.
+Streamliner does not modify the Content Manager server or any of its data. Most
+features change only what the browser renders, and never contact the server at
+all. These features do read from it, using the same API the page itself uses, and
+they send GET requests only.
 
 * Template Usage
 * Bypass Usage Dialog
@@ -82,12 +81,36 @@ Pin the button to the toolbar if you want it in view.
 
 ### Install as a userscript
 
-1. Install the [Tampermonkey extension](https://www.tampermonkey.net/).
-2. Open the [install link](https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js). Tampermonkey offers to install it.
+On Chrome, prefer the extension above, because Chrome now makes you turn
+userscripts on by hand. On Firefox and Safari this is the only route.
+
+1. Install a userscript manager. [Violentmonkey](https://violentmonkey.github.io/)
+   is open source and works on Chrome, Firefox and Safari.
+   [Tampermonkey](https://www.tampermonkey.net/) is the other common choice.
+2. Open the [install link](https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js). The manager offers to install it.
 3. Reload any open Content Manager tab.
 
-Tampermonkey then keeps itself up to date. It rechecks that same URL and
-installs a new copy whenever the `@version` line goes up.
+The manager then keeps itself up to date. It rechecks that same URL and installs
+a new copy whenever the `@version` line goes up.
+
+Either manager runs Streamliner the same way. Streamliner declares `@grant none`,
+so it uses none of the `GM_` functions that the two differ over.
+
+On Chrome, a userscript manager also needs its own permission before it can run
+anything. Open the manager's entry in `chrome://extensions` and turn on **Allow
+user scripts**. The extension above needs no such step.
+
+### Firefox and Safari
+
+Neither can load this folder as an extension the way Chrome can, so both use the
+userscript.
+
+Firefox could run it as an extension in principle. Firefox 128 and later support
+the page-context injection Streamliner needs. It would take a Gecko extension id
+and a signed build from addons.mozilla.org, neither of which is set up here.
+
+Safari is harder. A Safari extension has to be wrapped in a Mac app built with
+Xcode, and shipping it to anyone else needs a paid Apple developer account.
 
 ## Tested Versions
 
