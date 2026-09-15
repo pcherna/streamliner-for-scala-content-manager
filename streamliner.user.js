@@ -1011,14 +1011,15 @@
     li.setAttribute('data-cm-helper', 'true');
     li.setAttribute(USAGE_MARK, String(id));
 
-    var label = document.createElement('label');
-    label.textContent = 'Used:';
-    li.appendChild(label);
-
     // With the bypass on there is no dialog to open, so the line says what the
     // dialog would have said and links where it would have linked.
     var clauses = CONFIG.bypassUsageDialog
       ? usageClauses(TEMPLATE_KIND, { messagesCount: count }, id) : null;
+
+    var label = document.createElement('label');
+    label.textContent = clauses ? BYPASS_LABEL : 'Used:';
+    li.appendChild(label);
+
     if (clauses) {
       for (var c = 0; c < clauses.length; c++) {
         if (c) li.appendChild(document.createTextNode(', '));
@@ -1239,6 +1240,12 @@
   // never needed. No extra round trip per row either: one batched call covers a
   // whole page, the same call Content Manager already makes for itself.
 
+  // The label changes with the feature, because the line stops meaning the same
+  // thing. "Used: 3 times" is a tally. "Used By: 3 Messages" names what is using
+  // it. Every list gets the same label, including the channel list, whose own
+  // "Used in:" reads correctly but would be the odd one out.
+  var BYPASS_LABEL = 'Used By:';
+
   var BYPASS_MARK = 'data-streamliner-bypass';
   var BYPASS_HID = 'data-streamliner-hid';
 
@@ -1448,7 +1455,7 @@
     return li.querySelectorAll('a');
   }
 
-  function paintClauses(li, clauses, own) {
+  function paintClauses(li, clauses, own, labelText) {
     // Read the look off the app's anchor before hiding it, then hide rather
     // than remove, so switching the feature off puts its dialog back without a
     // reload.
@@ -1456,6 +1463,23 @@
     var holder = document.createElement('span');
     holder.setAttribute('data-cm-helper', 'true');
     holder.setAttribute(BYPASS_MARK, 'clauses');
+
+    // Our own label rather than an edit of the app's, for the same reason the
+    // clauses do not reuse its class: the list view rewrites what it owns when
+    // it re-renders a row, and our text would go with it. The app's is hidden
+    // by the same mechanism as its anchor, so teardown restores both.
+    if (labelText) {
+      var labels = li.querySelectorAll('label');
+      for (var n = 0; n < labels.length; n++) {
+        labels[n].setAttribute(BYPASS_HID, labels[n].style.display || '');
+        labels[n].style.display = 'none';
+      }
+      var lab = document.createElement('label');
+      lab.textContent = labelText;
+      holder.appendChild(lab);
+      holder.appendChild(document.createTextNode(' '));
+    }
+
     for (var k = 0; k < clauses.length; k++) {
       if (k) holder.appendChild(document.createTextNode(', '));
       holder.appendChild(clauseLink(clauses[k], model));
@@ -1476,11 +1500,12 @@
     if (!li || li.getAttribute(BYPASS_MARK)) return;
     var clauses = usageClauses(kind, counts, id);
     if (!clauses) return;
-    paintClauses(li, clauses, ownAnchors(li));
+    paintClauses(li, clauses, ownAnchors(li), BYPASS_LABEL);
   }
 
-  // The copy-text kinds already read correctly, so the app's own wording is
-  // reused verbatim and only the link changes.
+  // The copy-text kinds already count and name correctly, so the app's own
+  // wording for the clause is reused verbatim. Only the link and the label
+  // change.
   function paintCopiedClause(kind, row) {
     var id = row.getAttribute('data-id');
     if (!id) return;
@@ -1490,7 +1515,7 @@
     if (!own.length) return;
     var text = own[0].textContent.replace(/\s+/g, ' ').trim();
     if (!text) return;
-    paintClauses(li, [{ text: text, href: kind.link(id) }], own);
+    paintClauses(li, [{ text: text, href: kind.link(id) }], own, BYPASS_LABEL);
   }
 
   function applyBypassUsage() {
