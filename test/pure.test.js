@@ -214,6 +214,126 @@ test('dark mode: the base sheet is in place before the first sweep', () => {
   assert.equal(app.streamliner.isDark(), true);
 });
 
+// A CSSStyleDeclaration as far as darkDeclarations reads one.
+function fakeStyle(decls) {
+  return {
+    getPropertyValue(p) { return decls[p] ? decls[p][0] : ''; },
+    getPropertyPriority(p) { return decls[p] ? decls[p][1] || '' : ''; }
+  };
+}
+
+test('dark mode: url() values are made absolute against their sheet', () => {
+  const { absoluteUrls } = load().internals;
+  const base = 'https://cm.example/ContentManager/css/scala.css';
+  assert.equal(absoluteUrls('url("../images/a.png")', base), 'url("https://cm.example/ContentManager/images/a.png")');
+  assert.equal(absoluteUrls("url('b.png') no-repeat", base), 'url("https://cm.example/ContentManager/css/b.png") no-repeat');
+  assert.equal(absoluteUrls('url(c.png), linear-gradient(red, blue)', base),
+    'url("https://cm.example/ContentManager/css/c.png"), linear-gradient(red, blue)');
+  assert.equal(absoluteUrls('url("data:image/png;base64,AAA")', base), 'url("data:image/png;base64,AAA")');
+  assert.equal(absoluteUrls('url(#clip)', base), 'url(#clip)');
+  assert.equal(absoluteUrls('url("https://x.example/d.png")', base), 'url("https://x.example/d.png")');
+  assert.equal(absoluteUrls('none', base), 'none');
+});
+
+test('dark mode: every handled property is copied, colours forced and images at their own priority', () => {
+  const { darkDeclarations } = load().internals;
+  const base = 'https://cm.example/ContentManager/css/scala.css';
+
+  // The user-menu icon: an image the walk used to leave out. An image copy
+  // keeps its priority, so an inline image still beats it.
+  same(darkDeclarations(fakeStyle({ 'background-image': ['url("../images/userSettings.png")'] }), base), {
+    normal: ['background-image:url("https://cm.example/ContentManager/images/userSettings.png")'],
+    important: []
+  });
+
+  // 13.50 hides the text field ripple with transparent !important.
+  same(darkDeclarations(fakeStyle({ 'background-color': ['transparent', 'important'] }), base), {
+    normal: [],
+    important: ['background-color:transparent !important']
+  });
+
+  const mixed = darkDeclarations(fakeStyle({
+    'color': ['rgb(0, 0, 0)'],
+    'border-top-color': ['currentcolor'],
+    'box-shadow': ['none', 'important']
+  }), base);
+  same(mixed.normal, ['border-top-color:currentcolor !important', 'color:rgba(245,245,245,1) !important'], 'colours always reach inline styles');
+  same(mixed.important, ['box-shadow:none !important']);
+
+  // A tiled texture is still dropped.
+  same(darkDeclarations(fakeStyle({
+    'background-image': ['url("../images/bg.png")'],
+    'background-repeat': ['repeat']
+  }), base).normal, ['background-image:none']);
+
+  same(darkDeclarations(fakeStyle({}), base), { normal: [], important: [] });
+});
+
+test('dark mode: copies skip the sign-in panels the app already draws dark', () => {
+  const { outsideNativeDark } = load().internals;
+  const W = ':where(:not(.loginRow>.cell~.cell *))';
+  assert.equal(outsideNativeDark('.a'), '.a' + W);
+  assert.equal(outsideNativeDark('.a, .b > .c'), '.a' + W + ', .b > .c' + W, 'each selector in a list');
+  assert.equal(outsideNativeDark('.x:not(.y, .z)'), '.x:not(.y, .z)' + W, 'a comma inside :not() is not a split');
+  assert.equal(outsideNativeDark('[title="a, b::c"] .d'), '[title="a, b::c"] .d' + W, 'nor one inside quotes');
+  assert.equal(outsideNativeDark('.m::before'), '.m' + W + '::before', 'goes in front of a pseudo-element');
+  assert.equal(outsideNativeDark('.m:after'), '.m' + W + ':after', 'the legacy form too');
+  assert.equal(outsideNativeDark('::-webkit-scrollbar-thumb:hover'), W + '::-webkit-scrollbar-thumb:hover');
+  assert.equal(outsideNativeDark('a:hover'), 'a:hover' + W, 'a pseudo-class is not a pseudo-element');
+});
+
+// A readable stylesheet holding plain style rules, as eachStyleRule walks it.
+function fakeSheet(rules) {
+  const sheet = { href: 'https://cm.example/ContentManager/css/light.css', ownerNode: null };
+  sheet.cssRules = rules.map(([selectorText, decls]) =>
+    ({ type: 1, selectorText, style: fakeStyle(decls), parentStyleSheet: sheet }));
+  return sheet;
+}
+
+function darkSheetFor(rules) {
+  const app = load();
+  app.document.styleSheets = [fakeSheet(rules)];
+  app.streamliner.setDark(true, false);
+  return app.document.head.children.find((el) => el.id === 'cm-helper-dark').textContent;
+}
+
+test('dark mode: the panel exclusion is added only where the app has the panel', () => {
+  const W = ':where(:not(.loginRow>.cell~.cell *))';
+  const plain = darkSheetFor([['.box', { 'color': ['rgb(0, 0, 0)'] }]]);
+  assert.match(plain, /^\.box\{color:/m, '11.07 has no #contentRight, so no exclusion');
+  assert.ok(!plain.includes(W));
+
+  const panel = darkSheetFor([
+    ['#contentRight', { 'background-color': ['rgb(43, 46, 55)'] }],
+    ['.box', { 'color': ['rgb(0, 0, 0)'] }]
+  ]);
+  assert.ok(panel.includes('.box' + W + '{color:'), '12.00 and 13.50 get it on every copy');
+  assert.ok(panel.includes('#contentRight' + W + '{'));
+  assert.ok(!darkSheetFor([['#contentRightish', { 'color': ['rgb(0, 0, 0)'] }]]).includes(W),
+    'a longer id is not the panel');
+});
+
+test('dark mode: a repeated rule keeps only its last copy', () => {
+  const { keepLastCopies } = load().internals;
+  same(keepLastCopies(['a', 'b', 'a', 'c', 'b']), ['a', 'c', 'b']);
+  same(keepLastCopies([]), []);
+});
+
+test('dark mode: Scala logos are swapped, not inverted', () => {
+  const app = withConfig({ darkMode: true });
+  app.streamliner.setDark(true, false);
+  const css = app.document.head.children.find((el) => el.id === 'cm-helper-dark').textContent;
+  assert.match(css, /img\[src\*="svg\/scala_logo\.svg"\] \{ content: url\("https:\/\/cm\.example\/ContentManager\/images\/svg\/logo\.svg"\)/);
+  assert.match(css, /svg\/logo\.svg"\) !important;[^}]*width: 662px !important/, 'the swap keeps the original width');
+  assert.match(css, /img\[src\*="logo=true"\] \{ content: url\("https:\/\/cm\.example\/ContentManager\/images\/profiles\?logo=splash\.png"\)/);
+  assert.doesNotMatch(css, /\.mdc-text-field::before/, 'the text field ripple is not forced white');
+
+  const sel = app.internals.DARK_LOGO_SELECTOR;
+  for (const asset of ['svg/logo.svg', 'svg/scala_logo.svg', 'logo=true', 'logo=splash', '.splash img']) {
+    assert.ok(sel.includes(':not(' + (asset.startsWith('.') ? asset : '[src*="' + asset + '"]') + ')'), asset + ' is excluded');
+  }
+});
+
 test('a feature that throws is isolated, and given up on after three failures', () => {
   const app = load();
   const { runFeature } = app.internals;

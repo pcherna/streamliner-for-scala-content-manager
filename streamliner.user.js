@@ -97,10 +97,10 @@
 
     // Dark mode is off until you turn it on. The choice is remembered per server.
     darkMode: false,
-    // Lightens logo artwork so black ink does not vanish on a dark page. The
-    // trade is that a saturated mark comes back lighter than it started: the
-    // Scala red reads pink. Turn this off to keep the brand exact and accept
-    // that the wordmark goes dark on dark.
+    // Lightens logos other than Scala's own, so black ink does not vanish on a
+    // dark page. The trade is that a saturated mark comes back lighter than it
+    // started. Scala's logos are never inverted: dark mode shows the white
+    // versions the app ships for dark backgrounds, whatever this says.
     darkModeInvertLogos: true,
 
     debug: false
@@ -340,6 +340,22 @@
     return sheets.length;
   }
 
+  // 12.00 loads light.css twice, once through the inline @import and again as
+  // a <link>, so every rule the walk generates came out twice. Dropping all
+  // but the last copy of an identical rule changes nothing in the cascade: the
+  // last copy already won wherever the copies competed. Keeping the first
+  // copy would not be safe, since Jcrop's sheet sits between the two.
+  function keepLastCopies(rules) {
+    var seen = {};
+    var out = [];
+    for (var i = rules.length - 1; i >= 0; i--) {
+      if (seen[rules[i]]) continue;
+      seen[rules[i]] = true;
+      out.push(rules[i]);
+    }
+    return out.reverse();
+  }
+
   // Both walkers cost real time: light.css on 13.x is half a megabyte, and
   // walking it takes about 10ms. The sweep runs on every batch of DOM changes,
   // so the walk has to be skipped when nothing it reads has changed.
@@ -442,7 +458,7 @@
     });
     if (!out.length) return;
 
-    var css = out.join('\n');
+    var css = keepLastCopies(out).join('\n');
     if (styleEl && styleEl.textContent === css) return;
     if (!styleEl) styleEl = makeStyle(STYLE_ID);
     styleEl.textContent = css;
@@ -1981,7 +1997,7 @@
   // makes it the containing block for fixed-position descendants, which breaks
   // this app's fixed sidebars and modals. Instead every colour declared in the
   // stylesheets gets its HSL lightness flipped, hue and saturation kept, and is
-  // re-emitted as an !important override. Images are never touched.
+  // re-emitted in a sheet placed after the app's. Images are never touched.
   // Each colour property is mapped by the role it plays, not by inverting it.
   // A plain inversion turns an already-dark panel light, which is what made the
   // 13.x login form come out pale grey: #2b2e37 has lightness .19, and 1 - .19
@@ -2013,20 +2029,56 @@
 
   // Photographs must not be inverted: the Media library is full of them, and a
   // negative thumbnail is worse than a dark one. Logos are the exception, since
-  // their ink is usually black and vanishes once the page behind them is dark.
+  // their ink is often black and vanishes once the page behind them is dark.
   // "logo" in the URL is a narrow enough test to be safe here: Content Manager
-  // serves its brand art from images/profiles/?logo=... and scala_logo.svg,
-  // while media thumbnails carry an asset id instead.
+  // serves its brand art from images/profiles/?logo=... and images/svg/, while
+  // media thumbnails carry an asset id instead.
   //
-  // invert() alone would turn the red mark cyan. Following it with a 180 degree
+  // Scala's own art is never inverted, because only some of it has dark ink:
+  //   svg/logo.svg         12.00 header, 13.50 sidebar: already white ink
+  //   ?logo=splash.png     splash and .hiddenlogo: already white ink
+  //   svg/scala_logo.svg   12.00 and 13.50 login: dark ink, and the "!" is a
+  //                        hole, so it shows the dark page under any filter
+  //   ?logo=true           11.07 login: dark ink around an opaque white "!",
+  //                        which inversion turns black
+  // The first two are left alone. The last two are swapped for the white one
+  // the app ships for the same place, below. Both profile images can be
+  // rebranded by a customer, and splash is the brand's art for black, so the
+  // swap holds on a rebranded server too. Nothing inside the splash is
+  // inverted: it is black by design, and its spinner is an opaque black square
+  // that inversion turned white.
+  //
+  // invert() alone would turn a red mark cyan. Following it with a 180 degree
   // hue rotation puts the hue back, so black ink goes white and red stays red.
-  var DARK_LOGO_SELECTOR = 'img[src*="logo"], .scala-logo img, #scalaImg, .splash img';
+  var DARK_LOGO_SELECTOR = 'img[src*="logo"]' +
+    ':not([src*="svg/logo.svg"]):not([src*="svg/scala_logo.svg"])' +
+    ':not([src*="logo=true"]):not([src*="logo=splash"]):not(.splash img)';
+
+  var DARK_LOGO_SWAPS = [
+    // light.css gives #scalaImg no size, so it shows at its own 662px, and
+    // logo.svg's own size is a quarter of that. The two share an aspect
+    // ratio, so fixing the width keeps the height.
+    ['img[src*="svg/scala_logo.svg"]', 'images/svg/logo.svg', 'width: 662px !important; height: auto !important;'],
+    // The 11.07 login sets width and height on the element, which hold.
+    ['img[src*="logo=true"]', 'images/profiles?logo=splash.png', '']
+  ];
+
+  // The app's src values are relative to /ContentManager/, and so are these.
+  // Our sheet is inline, so a relative url() would resolve the same way, but an
+  // absolute one does not depend on that.
+  function darkLogoSwaps() {
+    return DARK_LOGO_SWAPS.map(function (swap) {
+      return swap[0] + ' { content: url("' + absoluteUrl(swap[1], document.baseURI) +
+        '") !important; object-fit: contain !important; filter: none !important; ' +
+        swap[2] + ' }';
+    });
+  }
 
   // Split in two on purpose. Everything here is !important, and so is every
-  // rule the walk generates, so when both target the same selector the later
-  // one wins. Anything that has to beat a generated rule must come after it:
-  // the app styles its own scrollbars, and Material's ripple selectors are
-  // walked like any other rule.
+  // colour the walk copies, so when both target the same selector the later
+  // one wins. Anything that has to beat a copy must come after it: the app
+  // styles its own scrollbars, and Material's ripple selectors are walked like
+  // any other rule.
   function darkBaseTop() {
     return [
       'html { color-scheme: dark !important; }',
@@ -2046,19 +2098,23 @@
       // Material's ripples are overlays: a circle behind a control, tinted with
       // the theme colour and held at a low opacity. The surface mapping never
       // lightens, so #6200ee became a dark purple, and a dark tint over a dark
-      // field reads as a smudge. On the yk login page it drew a visible ellipse
-      // behind the focused Username box. An overlay on a dark theme has to
-      // lighten, so these are forced white and left to their own opacity.
+      // field reads as a smudge. An overlay on a dark theme has to lighten, so
+      // these are forced white and left to their own opacity.
+      // The text field is left out, even through its mdc-ripple-upgraded
+      // class. 13.50 hides its ripple on purpose with transparent !important,
+      // and the walk passes that through. Forcing it white, or the recoloured
+      // tint before that, overrode the app's own hiding and drew an ellipse
+      // around the yk login's Username box.
       '.mdc-ripple-surface::before, .mdc-ripple-surface::after,',
-      '.mdc-ripple-upgraded::before, .mdc-ripple-upgraded::after,',
-      '.mdc-text-field::before, .mdc-text-field::after,',
+      '.mdc-ripple-upgraded:not(.mdc-text-field)::before,',
+      '.mdc-ripple-upgraded:not(.mdc-text-field)::after,',
       '.mdc-tab__ripple::before, .mdc-tab__ripple::after,',
       '.mdc-button::before, .mdc-button::after,',
       '.mdc-icon-button::before, .mdc-icon-button::after,',
       '.mdc-radio::before, .mdc-radio::after,',
       '.mdc-checkbox::before, .mdc-checkbox::after {',
       '  background-color: #ffffff !important; }'
-    ];
+    ].concat(darkLogoSwaps());
     if (CONFIG.darkModeInvertLogos) {
       lines.push(DARK_LOGO_SELECTOR + ' { filter: invert(1) hue-rotate(180deg) !important; }');
     }
@@ -2243,46 +2299,193 @@
     return changed ? out : null;
   }
 
-  function buildDarkCss() {
-    var out = [];
-    eachStyleRule(function (rule, prefix, suffix) {
-      var decls = [];
-      for (var i = 0; i < DARK_PROPS.length; i++) {
-        var prop = DARK_PROPS[i];
-        var raw = rule.style.getPropertyValue(prop);
-        if (!raw) continue;
-        var c = colourFromValue(raw);
-        if (!c || c[3] === 0) continue;
-        decls.push(prop + ':' + recolour(c, DARK_ROLES[prop]) + ' !important');
-      }
-      var bgImage = rule.style.getPropertyValue('background-image') || '';
-      var gradient = recolourGradient(bgImage);
-      if (gradient) {
-        decls.push('background-image:' + gradient + ' !important');
-      } else if (bgImage.indexOf('url(') !== -1) {
-        // A tiled image is a surface texture, and it paints straight over the
-        // background-colour we just darkened. 11.x does exactly this:
-        //   body { background: #e6e6e6 url(backgrounds/background.png) repeat }
-        // so the whole page kept a pale texture on every screen. Dropping it
-        // lets the recoloured colour through. Only images that tile on both
-        // axes qualify: an icon is no-repeat and a grip repeats on one axis,
-        // and both of those carry meaning worth keeping.
-        var repeat = (rule.style.getPropertyValue('background-repeat') || '').trim().toLowerCase();
-        if (repeat === 'repeat' || repeat === 'repeat repeat') {
-          decls.push('background-image:none !important');
-        }
-      }
+  function absoluteUrl(path, base) {
+    try {
+      return new URL(path, base).href;
+    } catch (e) {
+      return path;
+    }
+  }
 
-      // A box-shadow is another way to paint a surface. A large inset one fills
-      // the element's whole box, and a light one then reads as a white panel.
-      // The surface mapping never lightens, so an ordinary dark drop shadow
-      // such as rgba(0,0,0,.1) passes through untouched.
-      var shadow = recolourColourList(rule.style.getPropertyValue('box-shadow') || '');
-      if (shadow) decls.push('box-shadow:' + shadow + ' !important');
-
-      if (decls.length) out.push(prefix + rule.selectorText + '{' + decls.join(';') + '}' + suffix);
+  // A stylesheet's url() is relative to the sheet, and ours is an inline
+  // <style>, so url("../images/userSettings.png") copied out of scala.css would
+  // resolve against the page and miss. Fragments, data: and anything with a
+  // scheme are left alone.
+  function absoluteUrls(value, base) {
+    var raw = String(value);
+    if (!base || raw.indexOf('url(') === -1) return raw;
+    return raw.replace(/url\(\s*(['"]?)([^'"()]*)\1\s*\)/gi, function (whole, quote, path) {
+      path = path.trim();
+      if (!path || /^(#|[a-z][a-z0-9+.-]*:|\/\/)/i.test(path)) return whole;
+      return 'url("' + absoluteUrl(path, base) + '")';
     });
-    log('dark mode: recoloured ' + out.length + ' rules');
+  }
+
+  // The dark sheet copies every rule that sets a property it handles, with the
+  // same selector, recoloured where there is a colour to recolour and
+  // unchanged otherwise. The copies keep source order and sit after the app's
+  // sheets, so among themselves they fall out as the originals did.
+  //
+  // It used to copy only the declarations it recoloured, which flattened the
+  // app's cascade. scala.css has
+  //   header nav > ul > li.hover > a         { background: <gradient> }
+  //   header nav > ul > li.userSettings > a  { background-image: url(...) }
+  // at equal specificity, so the icon wins by coming later. Only the gradient
+  // was copied, so on hover it won instead, and painted a square into the
+  // icon's 30px box.
+  //
+  // Priority differs by kind. Colours are all written !important, because
+  // they have to reach inline styles: the app's inline colours assume a light
+  // page, and nothing recolours them. 13.50's Login button carries an inline
+  // color: black, and only an !important copy turns it light. The app's own
+  // !important colours go in a second list that is written last, which keeps
+  // them on top, as the 13.50 text field ripple needs. Images are never
+  // recoloured, so their copies keep the priority they had and an inline image
+  // still wins: the app sets the header logo and the user's picture inline,
+  // over defaults in scala.css.
+  function darkDeclarations(style, base) {
+    var out = { normal: [], important: [] };
+    function add(prop, value, ownPriority) {
+      var important = style.getPropertyPriority(prop) === 'important';
+      (important ? out.important : out.normal).push(prop + ':' + absoluteUrls(value, base) +
+        (important || !ownPriority ? ' !important' : ''));
+    }
+
+    for (var i = 0; i < DARK_PROPS.length; i++) {
+      var prop = DARK_PROPS[i];
+      var raw = style.getPropertyValue(prop);
+      if (!raw) continue;
+      var c = colourFromValue(raw);
+      add(prop, c && c[3] !== 0 ? recolour(c, DARK_ROLES[prop]) : raw);
+    }
+
+    var bgImage = style.getPropertyValue('background-image') || '';
+    if (bgImage) {
+      var gradient = recolourGradient(bgImage);
+      // A tiled image is a surface texture, and it paints straight over the
+      // background-colour we just darkened. 11.x does exactly this:
+      //   body { background: #e6e6e6 url(backgrounds/background.png) repeat }
+      // so the whole page kept a pale texture on every screen. Dropping it
+      // lets the recoloured colour through. Only images that tile on both
+      // axes qualify: an icon is no-repeat and a grip repeats on one axis,
+      // and both of those carry meaning worth keeping.
+      var repeat = (style.getPropertyValue('background-repeat') || '').trim().toLowerCase();
+      var tiled = !gradient && bgImage.indexOf('url(') !== -1 &&
+        (repeat === 'repeat' || repeat === 'repeat repeat');
+      add('background-image', gradient || (tiled ? 'none' : bgImage), true);
+    }
+
+    // A box-shadow is another way to paint a surface. A large inset one fills
+    // the element's whole box, and a light one then reads as a white panel.
+    // The surface mapping never lightens, so an ordinary dark drop shadow
+    // such as rgba(0,0,0,.1) passes through untouched.
+    var shadow = style.getPropertyValue('box-shadow') || '';
+    if (shadow) add('box-shadow', recolourColourList(shadow) || shadow);
+
+    return out;
+  }
+
+  // 12.00 and 13.50 draw the sign-in panel dark already: #2b2e37 behind light
+  // text, with every Material text field reset to #e6e6e6 !important for it.
+  // The recolouring assumes a light page, so it turned those light underlines
+  // and focus lines dark on a dark panel, where they all but vanished. The
+  // panels are left exactly as the app draws them.
+  //
+  // @scope (:root) to (...) would say this without touching selectors, but a
+  // selector inside @scope gets an implied :scope ancestor, so html body .x
+  // and anything set on <html> itself stop matching. :where() adds no
+  // specificity, so the copies still fall out among themselves as before.
+  //
+  // The panels are #contentRight, and on 13.50 #contentforgotPassword and
+  // #contentResetPassword too: every .cell after #contentLeft in .loginRow.
+  // Saying it by structure is less than half the length of naming all three,
+  // which matters when it goes on every selector in the sheet. 11.07 has no
+  // such panel, so there it goes on none.
+  var OUTSIDE_NATIVE_DARK = ':where(:not(.loginRow>.cell~.cell *))';
+  var NATIVE_DARK_PANEL = /#contentRight(?![\w-])/;
+
+  // Splits a selector list on its top-level commas, leaving the commas inside
+  // :not(a, b) or [title="a, b"] alone.
+  function splitSelectors(text) {
+    var out = [];
+    var depth = 0;
+    var quote = '';
+    var start = 0;
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '(' || ch === '[') {
+        depth++;
+      } else if (ch === ')' || ch === ']') {
+        depth--;
+      } else if (ch === ',' && depth === 0) {
+        out.push(text.slice(start, i).trim());
+        start = i + 1;
+      }
+    }
+    out.push(text.slice(start).trim());
+    return out;
+  }
+
+  // Where a pseudo-element starts, or the end. A pseudo-element can only come
+  // last, and a condition on the element has to go in front of it.
+  function pseudoElementAt(selector) {
+    var depth = 0;
+    var quote = '';
+    for (var i = 0; i < selector.length; i++) {
+      var ch = selector.charAt(i);
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = '';
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '(' || ch === '[') {
+        depth++;
+      } else if (ch === ')' || ch === ']') {
+        depth--;
+      } else if (ch === ':' && depth === 0) {
+        if (selector.charAt(i + 1) === ':' ||
+            /^:(before|after|first-line|first-letter)(?![\w-])/i.test(selector.slice(i))) return i;
+      }
+    }
+    return selector.length;
+  }
+
+  function outsideNativeDark(selectorText) {
+    return splitSelectors(selectorText).map(function (selector) {
+      var at = pseudoElementAt(selector);
+      return selector.slice(0, at) + OUTSIDE_NATIVE_DARK + selector.slice(at);
+    }).join(', ');
+  }
+
+  function buildDarkCss() {
+    var copies = [];
+    var hasPanel = false;
+    eachStyleRule(function (rule, prefix, suffix) {
+      if (!hasPanel && NATIVE_DARK_PANEL.test(rule.selectorText)) hasPanel = true;
+      var sheet = rule.parentStyleSheet;
+      var d = darkDeclarations(rule.style, (sheet && sheet.href) || document.baseURI);
+      if (d.normal.length || d.important.length) {
+        copies.push({ prefix: prefix, selector: rule.selectorText, suffix: suffix, decls: d });
+      }
+    });
+
+    // Whether the app has a panel to leave alone is only known once the walk
+    // is done, so the selectors are written after it.
+    var normal = [];
+    var important = [];
+    copies.forEach(function (copy) {
+      var open = copy.prefix + (hasPanel ? outsideNativeDark(copy.selector) : copy.selector) + '{';
+      var close = '}' + copy.suffix;
+      if (copy.decls.normal.length) normal.push(open + copy.decls.normal.join(';') + close);
+      if (copy.decls.important.length) important.push(open + copy.decls.important.join(';') + close);
+    });
+    var out = keepLastCopies(normal.concat(important));
+    log('dark mode: wrote ' + out.length + ' rules');
     return darkBaseTop() + '\n' + out.join('\n') + '\n' + darkBaseBottom();
   }
 
@@ -2523,7 +2726,7 @@
     darkMode: 'Applies as soon as you save.',
     showHostBadge: 'Adds the host badge to the login page.',
     hostInTitle: 'Puts the host in the tab title, in front of the page name.',
-    darkModeInvertLogos: 'Keeps logos legible on a dark page. A saturated mark comes back lighter.'
+    darkModeInvertLogos: 'Keeps logos other than Scala\'s legible on a dark page. A saturated mark comes back lighter.'
   };
 
   // The panel is grouped by feature. Each group has a master switch on its
@@ -3412,6 +3615,11 @@
       recolour: recolour,
       recolourGradient: recolourGradient,
       recolourColourList: recolourColourList,
+      absoluteUrls: absoluteUrls,
+      darkDeclarations: darkDeclarations,
+      keepLastCopies: keepLastCopies,
+      outsideNativeDark: outsideNativeDark,
+      DARK_LOGO_SELECTOR: DARK_LOGO_SELECTOR,
       colourFromValue: colourFromValue,
       byName: byName,
       usageClauses: usageClauses,

@@ -68,6 +68,7 @@ function load(opts) {
     documentElement,
     head,
     body,
+    baseURI: 'https://' + (opts.host || 'cm.example') + '/ContentManager/',
     readyState: 'complete',
     title: '',
     styleSheets: [],
@@ -104,6 +105,8 @@ function load(opts) {
     addEventListener() {},
     removeEventListener() {},
     MutationObserver: class { observe() {} disconnect() {} },
+    // A web API, not a JS builtin, so a vm context does not get it for free.
+    URL,
     CSSRule: { STYLE_RULE: 1, IMPORT_RULE: 3, MEDIA_RULE: 4, SUPPORTS_RULE: 12 },
     console: {
       log() {},
