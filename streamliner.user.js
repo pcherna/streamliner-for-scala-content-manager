@@ -1657,59 +1657,103 @@
       { sensitivity: 'base', numeric: true });
   }
 
+  // Every hook goes through these two, so an app version that differs in a
+  // way this code cannot see loses the fix and keeps the feature. A missing
+  // method is left alone. The original always runs, and the app gets its
+  // result. Anything Streamliner's own code throws is caught and logged.
+  //
+  // wrapBefore's extra may return a replacement argument list. wrapAfter's
+  // extra may return a replacement result. Returning nothing changes nothing.
+  function wrapBefore(proto, name, extra) {
+    var orig = proto && proto[name];
+    if (typeof orig !== 'function') return false;
+    proto[name] = function () {
+      var args = arguments;
+      try {
+        var changed = extra.apply(this, args);
+        if (changed) args = changed;
+      } catch (e) {
+        log(name + ' hook failed', e);
+      }
+      return orig.apply(this, args);
+    };
+    return true;
+  }
+
+  function wrapAfter(proto, name, extra) {
+    var orig = proto && proto[name];
+    if (typeof orig !== 'function') return false;
+    proto[name] = function () {
+      var out = orig.apply(this, arguments);
+      try {
+        var changed = extra.call(this, out);
+        if (changed !== undefined) out = changed;
+      } catch (e) {
+        log(name + ' hook failed', e);
+      }
+      return out;
+    };
+    return true;
+  }
+
+  // The picker's list view, if it has everything the auto-selection uses.
+  function pickerList(view) {
+    var list = view && view.files && view.files.list;
+    if (!list || !list.el || !list.$el || !list.collection) return null;
+    if (typeof list.on !== 'function' || typeof list.update !== 'function') return null;
+    if (typeof list.collection.find !== 'function') return null;
+    return list;
+  }
+
   // Only the picker uses MaintenanceFiles, so this touches nothing else.
   function patchMaintenanceFiles() {
     var models = appRequire('models/model');
     var Files = models && models.MaintenanceFiles;
-    if (!Files || Files.prototype.__streamlinerPatched) return !!Files;
+    if (!Files || !Files.prototype) return false;
+    if (Files.prototype.__streamlinerPatched) return true;
     Files.prototype.__streamlinerPatched = true;
 
-    var origFetch = Files.prototype.fetch;
-    Files.prototype.fetch = function (options) {
-      // The base fetch merges data into this.data, so the tally agrees too.
-      if (pickerOn()) {
-        options = options || {};
-        options.data = options.data || {};
-        options.data.limit = PICKER_ALL;
-        options.data.offset = 0;
-      }
-      return origFetch.call(this, options);
-    };
+    // The base fetch merges data into this.data, so the tally agrees too.
+    wrapBefore(Files.prototype, 'fetch', function (options) {
+      if (!pickerOn()) return;
+      options = options || {};
+      options.data = options.data || {};
+      options.data.limit = PICKER_ALL;
+      options.data.offset = 0;
+      return [options];
+    });
 
-    var origParse = Files.prototype.parse;
-    Files.prototype.parse = function () {
-      var list = origParse.apply(this, arguments);
-      if (pickerOn() && list && list.slice) list = list.slice().sort(byName);
-      return list;
-    };
+    wrapAfter(Files.prototype, 'parse', function (list) {
+      if (pickerOn() && list && typeof list.slice === 'function') return list.slice().sort(byName);
+    });
     return true;
   }
 
   function patchFilePicker() {
     if (pickerPatched) return;
     var Picker = appRequire(PICKER_MODULE);
-    if (!Picker || !patchMaintenanceFiles()) return;
+    if (!Picker || !Picker.prototype || !patchMaintenanceFiles()) return;
     pickerPatched = true;
 
-    var origAttach = Picker.prototype.attachListeners;
-    Picker.prototype.attachListeners = function () {
+    wrapAfter(Picker.prototype, 'attachListeners', function () {
       var view = this;
+      var list = pickerList(view);
+      if (!list) return;
       livePicker = view;
       pickerTarget = null;
       pickerBatch = [];
-      origAttach.apply(view, arguments);
       // Every render, not just the first: the app's own refreshes redraw the
       // list and drop the selection with it. The first render that holds the
       // file also ends the fast polling.
-      view.files.list.on('listRenderComplete', function () {
+      list.on('listRenderComplete', function () {
         if (view === livePicker && selectPickerTarget()) stopPickerPoll();
       });
       // A click by a person ends the auto-selection. Ours are not trusted.
       // Capture phase, because the row's own handler stops propagation.
-      view.files.list.el.addEventListener('click', function (e) {
+      list.el.addEventListener('click', function (e) {
         if (e.isTrusted) pickerTarget = null;
       }, true);
-    };
+    });
     log('file picker patched');
   }
 
@@ -1721,19 +1765,16 @@
   function patchUploader() {
     if (uploaderPatched) return;
     var Uploader = appRequire(UPLOADER_MODULE);
-    if (!Uploader) return;
+    if (!Uploader || !Uploader.prototype) return;
     uploaderPatched = true;
 
-    var origRender = Uploader.prototype.renderModal;
-    Uploader.prototype.renderModal = function () {
-      var out = origRender.apply(this, arguments);
+    wrapAfter(Uploader.prototype, 'renderModal', function () {
       var files = this.options && this.options.files;
-      if (pickerOn() && !(files && files.length) && this.modal && this.modal.contentView) {
-        var input = this.modal.contentView.$el.find('.browse')[0];
-        if (input) input.click();
-      }
-      return out;
-    };
+      if (!pickerOn() || (files && files.length)) return;
+      var content = this.modal && this.modal.contentView;
+      var input = content && content.$el && content.$el.find('.browse')[0];
+      if (input) input.click();
+    });
   }
 
   // The popup carries no sign of which dropdown opened it, so it is marked as
@@ -1741,17 +1782,13 @@
   function patchTaskTypeSelect() {
     if (selectPatched) return;
     var Select = appRequire(SELECT_MODULE);
-    if (!Select) return;
+    if (!Select || !Select.prototype) return;
     selectPatched = true;
 
-    var origBuild = Select.prototype.buildPopup;
-    Select.prototype.buildPopup = function () {
-      var out = origBuild.apply(this, arguments);
-      if (pickerOn() && this.popup && this.$el.closest('.commandSelector').length) {
-        this.popup.addClass(TALL_CLASS);
-      }
-      return out;
-    };
+    wrapAfter(Select.prototype, 'buildPopup', function () {
+      if (!pickerOn() || !this.popup || !this.$el) return;
+      if (this.$el.closest('.commandSelector').length) this.popup.addClass(TALL_CLASS);
+    });
   }
 
   function pickerOpen() {
@@ -1759,7 +1796,7 @@
   }
 
   function matchesUpload(model, name) {
-    var have = String(model.get('name') || '');
+    var have = String((model && typeof model.get === 'function' && model.get('name')) || '');
     return have === name || have.slice(-(name.length + 1)) === '/' + name;
   }
 
@@ -1768,18 +1805,24 @@
   // and only its own click handler updates them and enables Select.
   function selectPickerTarget() {
     if (!pickerOn() || !pickerTarget || !pickerOpen()) return false;
-    var list = livePicker.files.list;
-    var model = list.collection.find(function (m) { return matchesUpload(m, pickerTarget); });
-    if (!model) return false;
+    var list = pickerList(livePicker);
     var $ = window.jQuery;
-    var row = list.$el.find('li[data-id="' + model.id + '"]')[0];
-    if (!row || !$) return false;
-    list.$el.find('li.active:not(.header)').each(function () {
-      if (this !== row) this.click();
-    });
-    if (!$(row).hasClass('active')) row.click();
-    if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
-    return true;
+    if (!list || !$) return false;
+    try {
+      var model = list.collection.find(function (m) { return matchesUpload(m, pickerTarget); });
+      if (!model) return false;
+      var row = list.$el.find('li[data-id="' + model.id + '"]')[0];
+      if (!row) return false;
+      list.$el.find('li.active:not(.header)').each(function () {
+        if (this !== row) this.click();
+      });
+      if (!$(row).hasClass('active')) row.click();
+      if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+      return true;
+    } catch (e) {
+      log('auto-select failed', e);
+      return false;
+    }
   }
 
   function stopPickerPoll() {
@@ -1793,11 +1836,17 @@
     stopPickerPoll();
     pickerPollUntil = Date.now() + PICKER_POLL_CAP_MS;
     pickerPoll = nativeSetInterval(function () {
-      if (!pickerOn() || !pickerTarget || !pickerOpen() || Date.now() > pickerPollUntil) {
+      var list = pickerList(livePicker);
+      if (!list || !pickerOn() || !pickerTarget || !pickerOpen() || Date.now() > pickerPollUntil) {
         stopPickerPoll();
         return;
       }
-      livePicker.files.list.update();
+      try {
+        list.update();
+      } catch (e) {
+        log('picker refresh failed', e);
+        stopPickerPoll();
+      }
     }, PICKER_POLL_MS);
   }
 
@@ -1815,9 +1864,13 @@
       if (!pickerBatch.length) return;
       pickerTarget = pickerBatch[pickerBatch.length - 1];
       pickerBatch = [];
-      if (!pickerOn() || !pickerOpen()) return;
+      if (!pickerOn() || !pickerOpen() || !pickerList(livePicker)) return;
       startPickerPoll();
-      livePicker.files.list.update();
+      try {
+        pickerList(livePicker).update();
+      } catch (e) {
+        log('picker refresh failed', e);
+      }
     });
   }
 
