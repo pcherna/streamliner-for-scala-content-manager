@@ -3,10 +3,7 @@
 Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension and as a userscript. Both run the same
 `streamliner.user.js`.
 
-Streamliner does not modify the Content Manager server or any of its data. Most
-features change only what the browser renders, and never contact the server at
-all. These features do read from it, using the same API the page itself uses, and
-they send GET requests only.
+Streamliner does not modify the Content Manager server or any of its data. Except as noted here, features change only what the browser renders, and never contact the server at all. The following features do read from Content Manager using the same API the page itself uses, and they send GET requests only:
 
 * Template Usage
 * Bypass Usage Dialog
@@ -46,7 +43,7 @@ Breaks a Used: count into its parts in the list, such as 2 Channels and 1 Messag
 
 ### Maintenance Files Fixes
 
-Fixes the file picker behind a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
+Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
 
 ### Focus Search
 
@@ -62,7 +59,7 @@ Fix a problem where autofill (e.g. from a password manager) can't login because 
 
 ## Installing Streamliner
 
-### Install as a Chrome extension
+### Install as a Chrome extension (Chrome, Edge, and other Chromium-based browsers)
 
 1. Open `chrome://extensions`.
 2. Turn on Developer mode.

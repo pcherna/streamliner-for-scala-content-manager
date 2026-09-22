@@ -2442,10 +2442,11 @@
     {
       title: 'Maintenance Files Fixes',
       master: 'maintenanceFilesFixes',
-      blurb: 'In a maintenance job\'s file picker, lists every file on one page, sorted ' +
-             'without regard to case, and drops the warning icons. Upload opens the file ' +
-             'chooser directly, and a new upload is selected as soon as it appears. A ' +
-             'task\'s Type list shows every choice without scrolling.',
+      blurb: 'Improves the file selection for a maintenance job\'s Install File task. It ' +
+             'lists every file on one page, sorted without regard to case, and drops the ' +
+             'warning icon on files in use. Upload opens the file chooser straight away, ' +
+             'and a new upload is selected as soon as it appears. A task\'s Type list ' +
+             'shows every choice without scrolling.',
       advanced: []
     },
     {
