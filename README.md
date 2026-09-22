@@ -10,6 +10,7 @@ they send GET requests only.
 
 * Template Usage
 * Bypass Usage Dialog
+* Maintenance Files Fixes
 
 To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down.
 
@@ -43,9 +44,13 @@ Adds a Used: count to items in the template list, that links to those messages.
 
 Breaks a Used: count into its parts in the list, such as 2 Channels and 1 Message. Each part links straight to what it counts, instead of via the Usage Dialog.
 
+### Maintenance Files Fixes
+
+Fixes the file picker behind a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
+
 ### Focus Search
 
-Adds a keyboard shortcut to focus each page's search box. Defaults to `/`, but can be changed to for example `Ctrl+k` or `Cmd+k`
+Adds a keyboard shortcut to focus each page's search box. Defaults to `/`, but can be changed to for example `Ctrl+k` or `Cmd+k`. In a dialog, the shortcut reaches the dialog's own search box.
 
 ### Host Identification
 

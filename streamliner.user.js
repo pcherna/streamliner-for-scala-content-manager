@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.40.0
+// @version      1.41.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -90,6 +90,11 @@
     // going through Content Manager's dialog to reach the same links.
     bypassUsageDialog: true,
 
+    // The Install File task's file picker: every file on one page, sorted
+    // without regard to case, no warning icons, the file chooser opened by
+    // Upload, and a fresh upload selected as soon as it appears.
+    maintenanceFilesFixes: true,
+
     // Dark mode is off until you turn it on. The choice is remembered per server.
     darkMode: false,
     // Lightens logo artwork so black ink does not vanish on a dark page. The
@@ -138,7 +143,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.40.0';
+  var VERSION = '1.41.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -1588,6 +1593,253 @@
     bypassPending = false;
   }
 
+  // ------------------------------------------------ maintenance file picker
+
+  // The Install File task's picker is module/maintenancejob/fileSelector, the
+  // same code on 11.07 and 12.00. It asks the server for ten files at a time
+  // sorted by name, and the server sorts case-sensitively, so "agent10.exe"
+  // lands after "Touchless.exe". There is no case-insensitive sort to ask for.
+  // So the whole list is fetched in one go and sorted here. With one page the
+  // app's pager draws nothing, and only the limit selector needs hiding.
+  //
+  // The hooks are prototype wrappers, reached through the app's own require.
+  // They go in lazily from the sweep, because the modules only exist once
+  // main.js has run, and they read the config on every call so Save applies
+  // at once. A module that is missing, as it may be on 13.x, is left alone.
+  var PICKER_MODULE = 'module/maintenancejob/fileSelector';
+  var UPLOADER_MODULE = 'components/uploader/maintenanceJobUploader';
+  var SELECT_MODULE = 'components/inlineEdit/select';
+  var TALL_CLASS = 'streamliner-tall';
+  var PICKER_ALL = 999999;          // what the app itself asks for to mean "all"
+  var PICKER_POLL_MS = 1000;
+  var PICKER_POLL_CAP_MS = 30000;
+
+  // The warning icon marks every file in use, which is most of them, and the
+  // Used: line under the name already says so.
+  //
+  // The task's Type list is capped at 156px, like every dropdown in the app,
+  // and scrolls to show its eleven entries. The cap is lifted for that one list.
+  // The list hangs off <body>, so the dialog's own height never mattered.
+  var PICKER_CSS = [
+    '.fileSelector li.usedCount img[src*="icon_warning"] { display: none !important; }',
+    '.fileSelector .limitSelector { display: none !important; }',
+    'html body ul.selectPopup.' + TALL_CLASS + ' { max-height: none !important; overflow-y: auto !important; }'
+  ].join('\n');
+
+  var pickerEl = null;
+  var pickerPatched = false;
+  var uploaderPatched = false;
+  var selectPatched = false;
+  var livePicker = null;            // the fileSelector view currently open
+  var pickerBatch = [];             // names seen in the upload in progress
+  var pickerTarget = null;          // name to select, until the user picks
+  var pickerPoll = null;
+  var pickerPollUntil = 0;
+  var pickerEventsBound = false;
+
+  function pickerOn() {
+    return !!CONFIG.maintenanceFilesFixes;
+  }
+
+  function appRequire(name) {
+    var req = window.require;
+    if (typeof req !== 'function' || typeof req.defined !== 'function') return null;
+    if (!req.defined(name)) return null;
+    try {
+      return req(name);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function byName(a, b) {
+    return String(a && a.name).localeCompare(String(b && b.name), undefined,
+      { sensitivity: 'base', numeric: true });
+  }
+
+  // Only the picker uses MaintenanceFiles, so this touches nothing else.
+  function patchMaintenanceFiles() {
+    var models = appRequire('models/model');
+    var Files = models && models.MaintenanceFiles;
+    if (!Files || Files.prototype.__streamlinerPatched) return !!Files;
+    Files.prototype.__streamlinerPatched = true;
+
+    var origFetch = Files.prototype.fetch;
+    Files.prototype.fetch = function (options) {
+      // The base fetch merges data into this.data, so the tally agrees too.
+      if (pickerOn()) {
+        options = options || {};
+        options.data = options.data || {};
+        options.data.limit = PICKER_ALL;
+        options.data.offset = 0;
+      }
+      return origFetch.call(this, options);
+    };
+
+    var origParse = Files.prototype.parse;
+    Files.prototype.parse = function () {
+      var list = origParse.apply(this, arguments);
+      if (pickerOn() && list && list.slice) list = list.slice().sort(byName);
+      return list;
+    };
+    return true;
+  }
+
+  function patchFilePicker() {
+    if (pickerPatched) return;
+    var Picker = appRequire(PICKER_MODULE);
+    if (!Picker || !patchMaintenanceFiles()) return;
+    pickerPatched = true;
+
+    var origAttach = Picker.prototype.attachListeners;
+    Picker.prototype.attachListeners = function () {
+      var view = this;
+      livePicker = view;
+      pickerTarget = null;
+      pickerBatch = [];
+      origAttach.apply(view, arguments);
+      // Every render, not just the first: the app's own refreshes redraw the
+      // list and drop the selection with it. The first render that holds the
+      // file also ends the fast polling.
+      view.files.list.on('listRenderComplete', function () {
+        if (view === livePicker && selectPickerTarget()) stopPickerPoll();
+      });
+      // A click by a person ends the auto-selection. Ours are not trusted.
+      // Capture phase, because the row's own handler stops propagation.
+      view.files.list.el.addEventListener('click', function (e) {
+        if (e.isTrusted) pickerTarget = null;
+      }, true);
+    };
+    log('file picker patched');
+  }
+
+  // Upload opens a "File Upload" dialog whose only job is its Add button,
+  // which opens the file chooser. Doing that straight away saves the click.
+  // It runs inside the Upload click, so the browser still counts it as the
+  // user's gesture. A drop arrives with its files already, and Add More after
+  // a first pick stays a manual click.
+  function patchUploader() {
+    if (uploaderPatched) return;
+    var Uploader = appRequire(UPLOADER_MODULE);
+    if (!Uploader) return;
+    uploaderPatched = true;
+
+    var origRender = Uploader.prototype.renderModal;
+    Uploader.prototype.renderModal = function () {
+      var out = origRender.apply(this, arguments);
+      var files = this.options && this.options.files;
+      if (pickerOn() && !(files && files.length) && this.modal && this.modal.contentView) {
+        var input = this.modal.contentView.$el.find('.browse')[0];
+        if (input) input.click();
+      }
+      return out;
+    };
+  }
+
+  // The popup carries no sign of which dropdown opened it, so it is marked as
+  // it is built, when the dropdown is the task's command selector.
+  function patchTaskTypeSelect() {
+    if (selectPatched) return;
+    var Select = appRequire(SELECT_MODULE);
+    if (!Select) return;
+    selectPatched = true;
+
+    var origBuild = Select.prototype.buildPopup;
+    Select.prototype.buildPopup = function () {
+      var out = origBuild.apply(this, arguments);
+      if (pickerOn() && this.popup && this.$el.closest('.commandSelector').length) {
+        this.popup.addClass(TALL_CLASS);
+      }
+      return out;
+    };
+  }
+
+  function pickerOpen() {
+    return !!(livePicker && livePicker.el && livePicker.el.isConnected && isVisible(livePicker.el));
+  }
+
+  function matchesUpload(model, name) {
+    var have = String(model.get('name') || '');
+    return have === name || have.slice(-(name.length + 1)) === '/' + name;
+  }
+
+  // Leaves exactly one row active, the one just uploaded. Rows are clicked
+  // rather than styled, because the app keeps its selection on the item views
+  // and only its own click handler updates them and enables Select.
+  function selectPickerTarget() {
+    if (!pickerOn() || !pickerTarget || !pickerOpen()) return false;
+    var list = livePicker.files.list;
+    var model = list.collection.find(function (m) { return matchesUpload(m, pickerTarget); });
+    if (!model) return false;
+    var $ = window.jQuery;
+    var row = list.$el.find('li[data-id="' + model.id + '"]')[0];
+    if (!row || !$) return false;
+    list.$el.find('li.active:not(.header)').each(function () {
+      if (this !== row) this.click();
+    });
+    if (!$(row).hasClass('active')) row.click();
+    if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' });
+    return true;
+  }
+
+  function stopPickerPoll() {
+    if (pickerPoll) nativeClearInterval(pickerPoll);
+    pickerPoll = null;
+  }
+
+  // The app waits five seconds before its first look and then looks every five.
+  // This looks every second and stops at the first sight of the file.
+  function startPickerPoll() {
+    stopPickerPoll();
+    pickerPollUntil = Date.now() + PICKER_POLL_CAP_MS;
+    pickerPoll = nativeSetInterval(function () {
+      if (!pickerOn() || !pickerTarget || !pickerOpen() || Date.now() > pickerPollUntil) {
+        stopPickerPoll();
+        return;
+      }
+      livePicker.files.list.update();
+    }, PICKER_POLL_MS);
+  }
+
+  // The upload events are jQuery events on the app's root view, which a native
+  // listener would never see.
+  function bindPickerEvents() {
+    if (pickerEventsBound) return;
+    var app = window.App;
+    if (!app || !app.view || !app.view.$el) return;
+    pickerEventsBound = true;
+    app.view.$el.on('fileUploadStarted', function (e, data) {
+      if (data && data.filename && pickerOpen()) pickerBatch.push(String(data.filename));
+    });
+    app.view.$el.on('filesUploaded', function () {
+      if (!pickerBatch.length) return;
+      pickerTarget = pickerBatch[pickerBatch.length - 1];
+      pickerBatch = [];
+      if (!pickerOn() || !pickerOpen()) return;
+      startPickerPoll();
+      livePicker.files.list.update();
+    });
+  }
+
+  function applyFilePicker() {
+    patchFilePicker();
+    patchUploader();
+    patchTaskTypeSelect();
+    bindPickerEvents();
+    if (!pickerOn()) return;
+    if (pickerEl && pickerEl.isConnected) return;
+    if (!(document.head || document.documentElement)) return;
+    pickerEl = makeStyle('cm-helper-picker');
+    pickerEl.textContent = PICKER_CSS;
+  }
+
+  function removeFilePicker() {
+    if (pickerEl && pickerEl.parentNode) pickerEl.parentNode.removeChild(pickerEl);
+    pickerEl = null;
+    stopPickerPoll();
+    pickerTarget = null;
+  }
+
   // ------------------------------------------------------------- dark mode
 
   // A real dark theme, not a filter. Applying `filter: invert()` to <html>
@@ -2188,6 +2440,15 @@
       advanced: []
     },
     {
+      title: 'Maintenance Files Fixes',
+      master: 'maintenanceFilesFixes',
+      blurb: 'In a maintenance job\'s file picker, lists every file on one page, sorted ' +
+             'without regard to case, and drops the warning icons. Upload opens the file ' +
+             'chooser directly, and a new upload is selected as soon as it appears. A ' +
+             'task\'s Type list shows every choice without scrolling.',
+      advanced: []
+    },
+    {
       title: 'Focus Search',
       master: 'focusSearch',
       blurb: 'Adds a keyboard shortcut to focus each page\'s search box.',
@@ -2604,6 +2865,8 @@
     // counts stay cached, so the sweep redraws both without a single request.
     else dropUsageLines();
     removeBypassUsage();
+    // The prototype hooks stay and check the switch. Only the sheet goes.
+    removeFilePicker();
     // Let the placeholder hint pick up a changed hotkey. Every box that carries
     // one, not just the first: a second box gets decorated as soon as it is the
     // visible one, and both can be in the DOM at once.
@@ -2685,9 +2948,25 @@
     return mac ? parts.join('') : parts.join('+');
   }
 
-  // The box the hotkey would reach: the first visible, usable one.
+  // An open dialog, if there is one. The last in the document is the one on top.
+  var DIALOG_SELECTOR = '.modalContainer .modal, .mdc-dialog--open';
+
+  function openDialog() {
+    var list = document.querySelectorAll(DIALOG_SELECTOR);
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (isVisible(list[i])) return list[i];
+    }
+    return null;
+  }
+
+  // The box the hotkey would reach: the first visible, usable one. A dialog's
+  // own box wins. The page behind it can have a visible box of its own, which
+  // comes first in the document: the Players tab does, under Add Players.
   function searchTarget() {
-    var list = document.querySelectorAll(SEARCH_SELECTOR);
+    var dialog = openDialog();
+    var list = dialog && dialog.querySelector(SEARCH_SELECTOR)
+      ? dialog.querySelectorAll(SEARCH_SELECTOR)
+      : document.querySelectorAll(SEARCH_SELECTOR);
     for (var i = 0; i < list.length; i++) {
       var el = list[i];
       if (!isVisible(el) || el.disabled || el.readOnly) continue;
@@ -2749,6 +3028,7 @@
     applyListFilters();
     applyTemplateUsage();
     applyBypassUsage();
+    applyFilePicker();
     installUserMenuItem();
     watchFonts();
     decorateSearchBox();
