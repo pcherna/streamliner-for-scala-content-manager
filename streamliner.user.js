@@ -6,6 +6,7 @@
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
 // @run-at       document-start
+// @noframes
 // @grant        none
 // @license      GPL-3.0-or-later
 // @homepageURL  https://github.com/pcherna/streamliner-for-scala-content-manager
@@ -43,10 +44,9 @@
 
     // ---- login -----------------------------------------------------------
     // Makes the Sign In button react to a password manager filling the fields.
-    // Two halves of one job, so one switch. A server with disableLoginAutocomplete
-    // on renders the login inputs readonly, which stops a password manager
-    // filling them at all; and the app only enables Sign In from a keyup, which
-    // a fill does not produce. Wanting one without the other makes no sense.
+    // The app only enables Sign In from a keyup, which a fill does not produce.
+    // The fields themselves are never touched: a server that renders them
+    // readonly to block autofill (disableLoginAutocomplete) keeps that choice.
     fixSignIn: true,
     // Shows which server you are signing in to, on the login page.
     showHostBadge: true,
@@ -117,20 +117,50 @@
   // MAIN world where chrome.storage does not exist, and the userscript uses
   // @grant none. The cost is that settings are per server, which is wanted here
   // because 11.x and 13.x need different ones.
+  // A saved value has to be the same kind of thing as the default. A string
+  // where a number belongs would otherwise stick: the panel renders a text box
+  // for whatever type it finds, so every save after that keeps the string.
+  function sameShape(value, model) {
+    if (value === null || model === null) return value === model;
+    if (Array.isArray(model)) return Array.isArray(value);
+    if (typeof model === 'object') return typeof value === 'object' && !Array.isArray(value);
+    if (typeof model === 'number') return typeof value === 'number' && isFinite(value);
+    return typeof value === typeof model;
+  }
+
   function loadConfig() {
     try {
       var raw = window.localStorage.getItem(CONFIG_KEY);
       if (!raw) return;
       var saved = JSON.parse(raw);
       for (var k in saved) {
-        if (Object.prototype.hasOwnProperty.call(DEFAULTS, k)) CONFIG[k] = saved[k];
+        if (!Object.prototype.hasOwnProperty.call(DEFAULTS, k)) continue;
+        if (!sameShape(saved[k], DEFAULTS[k])) continue;
+        CONFIG[k] = saved[k];
       }
     } catch (e) { /* private mode, or corrupt json */ }
   }
 
-  // Reset must not hand the defaults object itself to CONFIG. An in-place edit
-  // of CONFIG.labelOverrides would then change the defaults too, and the save
-  // below would see no difference and write nothing.
+  // A CSS-valued setting is typed by hand and lands in a stylesheet. The
+  // browser drops a value it cannot parse, but a stray brace ends the rule
+  // early and takes the rest of the sheet with it. So a value the browser will
+  // not accept for that property falls back to the shipped default.
+  function cssValue(key, prop) {
+    var value = String(CONFIG[key]);
+    var ok = true;
+    try {
+      if (window.CSS && typeof window.CSS.supports === 'function') ok = window.CSS.supports(prop, value);
+    } catch (e) {
+      ok = false;
+    }
+    if (ok) return value;
+    log('invalid ' + key + ' "' + value + '", using the default');
+    return String(DEFAULTS[key]);
+  }
+
+  // The defaults must never be handed out by reference. An in-place edit of a
+  // copy that is really DEFAULTS.labelOverrides would change the defaults too,
+  // and the save below would then see no difference and write nothing.
   function cloneValue(v) {
     return v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v;
   }
@@ -322,8 +352,12 @@
   function sheetSignature() {
     var sheets = document.styleSheets;
     if (!sheets) return '0';
-    var bits = [sheets.length];
+    var bits = [];
     for (var i = 0; i < sheets.length; i++) {
+      // The helper's own sheets are not input to anything, and counting them
+      // made every sheet the helper added cost one more rebuild.
+      var node = sheets[i].ownerNode;
+      if (node && node.getAttribute && node.getAttribute('data-cm-helper')) continue;
       var rules = null;
       try {
         rules = sheets[i].cssRules;
@@ -347,7 +381,7 @@
       }
       bits.push(imported ? rules.length + '+' + imported : rules.length);
     }
-    return bits.join(',');
+    return bits.length + ':' + bits.join(',');
   }
 
   // ------------------------------------------------- CSS animation scaling
@@ -452,7 +486,10 @@
     var orig = window.setTimeout;
     var patched = function (fn, delay) {
       var rest = Array.prototype.slice.call(arguments, 2);
-      var d = typeof delay === 'number' ? delay : 0;
+      // Coerced the way the native call does it: "500" is 500ms, and anything
+      // that is not a number is 0. Treating a string as 0 made it fire at once.
+      var d = Number(delay);
+      if (!isFinite(d)) d = 0;
       if (CONFIG.scaleTimeouts && d > 0 && d <= CONFIG.timeoutCeilingMs) d = scale(d);
       return orig.apply(window, [fn, d].concat(rest));
     };
@@ -514,8 +551,6 @@
     if (lastValues.get(el) === value) return;
     lastValues.set(el, value);
 
-    if (el.hasAttribute('readonly')) el.removeAttribute('readonly');
-
     // updateFormStatus only reads keyCode to short-circuit on Enter, so a
     // synthetic event with no keyCode takes the safe branch.
     el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'a' }));
@@ -549,15 +584,6 @@
       pollTimer = null;
       log('sign-in form gone, polling stopped');
     }
-
-    if (present) {
-      var inputs = signInInputs();
-      for (var i = 0; i < inputs.length; i++) {
-        if (!inputs[i].hasAttribute('readonly')) continue;
-        inputs[i].removeAttribute('readonly');
-        log('removed readonly from', inputs[i].className || inputs[i].name);
-      }
-    }
   }
 
   // ------------------------------------------------------------ host badge
@@ -584,13 +610,16 @@
     var host = window.location.host;
     var current = document.title || '';
     if (current.indexOf(host) === 0) return;
-    document.title = host + ' \u00b7 ' + current;
+    // An empty title gets the host alone, not the host and a dangling dot.
+    document.title = current ? host + ' \u00b7 ' + current : host;
   }
 
   function removeHostTitle() {
-    var lead = window.location.host + ' \u00b7 ';
+    var host = window.location.host;
+    var lead = host + ' \u00b7 ';
     var current = document.title || '';
     if (current.indexOf(lead) === 0) document.title = current.slice(lead.length);
+    else if (current === host) document.title = '';
   }
 
   // Both directions, so turning the feature off does not leave the prefix
@@ -667,7 +696,7 @@
     badge.id = 'cm-helper-host';
     badge.setAttribute('data-cm-helper', 'true');
     badge.textContent = hostBadgeText();
-    badge.style.cssText = 'text-align:center;margin:14px 0 0;font-size:' + CONFIG.hostBadgeSize + ';';
+    badge.style.cssText = 'text-align:center;margin:14px 0 0;font-size:' + cssValue('hostBadgeSize', 'font-size') + ';';
 
     anchor.parentNode.insertBefore(badge, anchor.nextSibling);
     log('host badge placed under the copyright line');
@@ -751,8 +780,22 @@
     return index;
   }
 
+  // The element that carries an item's label: the app's own .nav-label, ours
+  // from an earlier pass, or a span with text in it. A span with no text is an
+  // icon wrapper. Writing the label into one of those put the text where the
+  // icon rules apply, and left it there on teardown.
+  function labelElementFor(a) {
+    var known = a.querySelector('.nav-label, .cm-helper-label');
+    if (known) return known;
+    var spans = a.querySelectorAll('span');
+    for (var i = 0; i < spans.length; i++) {
+      if (spans[i].textContent.trim()) return spans[i];
+    }
+    return null;
+  }
+
   function labelTextFor(a, index) {
-    var existing = a.querySelector('.nav-label, .cm-helper-label, span');
+    var existing = labelElementFor(a);
     var full = existing ? existing.textContent.trim() : '';
     // 13.50 renders no label element at all: the text is in title, and on a few
     // items only in aria-label. data-test is the last resort.
@@ -794,8 +837,8 @@
     if ((!pinnedEl || !pinnedEl.isConnected) && (document.head || document.documentElement)) {
       pinnedEl = makeStyle('cm-helper-pinned');
       pinnedEl.textContent = PINNED_TEXT_CSS
-        .split('%W%').join(CONFIG.pinnedMenuWidth)
-        .split('%H%').join(CONFIG.pinnedHoverColor);
+        .split('%W%').join(cssValue('pinnedMenuWidth', 'min-width'))
+        .split('%H%').join(cssValue('pinnedHoverColor', 'background-color'));
     }
     var index = buildOverrideIndex();
     var items = document.querySelectorAll(PINNED_ITEM);
@@ -825,7 +868,7 @@
       if (mine && mine.parentNode) mine.parentNode.removeChild(mine);
       var full = a.getAttribute('data-cm-full');
       if (!full) continue;
-      var existing = a.querySelector('.nav-label, span');
+      var existing = labelElementFor(a);
       if (existing && existing.textContent.trim() !== full) existing.textContent = full;
       a.removeAttribute('data-cm-full');
     }
@@ -866,8 +909,9 @@
     if (filtersEl && filtersEl.isConnected) return;
     if (!(document.head || document.documentElement)) return;
     filtersEl = makeStyle('cm-helper-filters');
-    filtersEl.textContent = FILTER_CSS.split('%H%').join(CONFIG.listFilterHeight);
-    log('list filters set to scroll at ' + CONFIG.listFilterHeight);
+    var height = cssValue('listFilterHeight', 'max-height');
+    filtersEl.textContent = FILTER_CSS.split('%H%').join(height);
+    log('list filters set to scroll at ' + height);
   }
 
   function removeListFilters() {
@@ -897,8 +941,12 @@
   // every version, and a bare li.usage selector finds that one first.
   var USAGE_LIST = 'div.column.col3 > ul';
   var USAGE_TTL_MS = 60000;
+  var USAGE_TIMEOUT_MS = 30000;
+  // How many times a count request may fail before the row is given up on.
+  var USAGE_RETRIES = 2;
 
   var usageCounts = {};       // template id -> number, or null while in flight
+  var usageFailures = {};     // template id -> failed count requests so far
   var usageInuse = null;      // template id -> true
   var usageInuseAt = 0;
   var usageInuseWaiters = null;
@@ -923,15 +971,27 @@
     var base = usageApiBase();
     if (!base) { done(null); return; }
     var xhr = new XMLHttpRequest();
-    try { xhr.open('GET', base + path, true); } catch (e) { done(null); return; }
+    // Called at most once, whichever of the handlers below gets there first.
+    var finished = false;
+    function finish(data) {
+      if (finished) return;
+      finished = true;
+      done(data);
+    }
+    try { xhr.open('GET', base + path, true); } catch (e) { finish(null); return; }
+    // A request that never answers must not hold a concurrency slot, or the
+    // bypass's one in-flight flag, for the rest of the session.
+    xhr.timeout = USAGE_TIMEOUT_MS;
+    xhr.ontimeout = function () { finish(null); };
+    xhr.onerror = function () { finish(null); };
     xhr.onreadystatechange = function () {
       if (xhr.readyState !== 4) return;
-      if (xhr.status < 200 || xhr.status >= 300) { done(null); return; }
+      if (xhr.status < 200 || xhr.status >= 300) { finish(null); return; }
       var data = null;
       try { data = JSON.parse(xhr.responseText); } catch (e) { /* not json */ }
-      done(data);
+      finish(data);
     };
-    try { xhr.send(); } catch (e) { done(null); }
+    try { xhr.send(); } catch (e) { finish(null); }
   }
 
   // The default page size is 10, so the limit is not optional.
@@ -978,8 +1038,18 @@
           // exceed the concurrency cap.
           if (gen !== usageGeneration) return;
           usageActive--;
-          usageCounts[id] = data && typeof data.resultCount === 'number' ? data.resultCount : 0;
-          usagePaint(id);
+          if (data && typeof data.resultCount === 'number') {
+            usageCounts[id] = data.resultCount;
+            usagePaint(id);
+          } else {
+            // Not recorded as 0: the inuse call said this template has
+            // messages, so drawing nothing would be wrong. Forgotten instead,
+            // so the next sweep asks again, up to a cap so a server that is
+            // down is not asked forever.
+            usageFailures[id] = (usageFailures[id] || 0) + 1;
+            if (usageFailures[id] > USAGE_RETRIES) usageCounts[id] = 0;
+            else delete usageCounts[id];
+          }
           usagePump();
         });
       }(usageQueue.shift(), usageGeneration));
@@ -1226,6 +1296,7 @@
     // Replies already on the wire must not land in the cleared caches.
     usageGeneration++;
     usageCounts = {};
+    usageFailures = {};
     usageInuse = null;
     usageInuseAt = 0;
     usageInuseWaiters = null;
@@ -1376,9 +1447,17 @@
     bypassEl.textContent = BYPASS_CSS;
   }
 
-  var bypassCounts = {};      // row id -> the counts object from the list call
+  var bypassCounts = {};      // list name + row id -> the counts object from the list call
   var bypassPending = false;
   var bypassGeneration = 0;
+
+  // Keyed by list as well as id. A reply can land after the user has moved on
+  // to another list, and ids are not known to be distinct across object types,
+  // so a media row's counts must never answer for a playlist row. Both carry a
+  // messagesCount, and the link would have pointed at the wrong things.
+  function bypassKey(kind, id) {
+    return kind.name + ':' + id;
+  }
 
   function usageKind() {
     if (!CONFIG.bypassUsageDialog) return null;
@@ -1501,7 +1580,7 @@
 
   function paintRowClauses(kind, row) {
     var id = row.getAttribute('data-id');
-    var counts = bypassCounts[id];
+    var counts = bypassCounts[bypassKey(kind, id)];
     if (!counts) return;
     var li = rowUsageLi(row);
     if (!li || li.getAttribute(BYPASS_MARK)) return;
@@ -1548,7 +1627,7 @@
       // No line at all means the item is unused, and there is nothing to say.
       var li = rowUsageLi(rows[i]);
       if (!li || li.getAttribute(BYPASS_MARK)) continue;
-      if (Object.prototype.hasOwnProperty.call(bypassCounts, id)) {
+      if (Object.prototype.hasOwnProperty.call(bypassCounts, bypassKey(kind, id))) {
         paintRowClauses(kind, rows[i]);
         continue;
       }
@@ -1562,15 +1641,16 @@
       if (gen !== bypassGeneration) return;
       bypassPending = false;
       var list = (data && data.list) || [];
+      // Stored under the list the request was for, whatever list is showing
+      // by the time the reply arrives.
       for (var k = 0; k < list.length; k++) {
-        bypassCounts[String(list[k].id)] = list[k];
+        bypassCounts[bypassKey(kind, String(list[k].id))] = list[k];
       }
       // Anything the call did not answer for is recorded empty, so the next
       // sweep does not queue it again and again.
       for (var m = 0; m < pending.length; m++) {
-        if (!Object.prototype.hasOwnProperty.call(bypassCounts, pending[m])) {
-          bypassCounts[pending[m]] = {};
-        }
+        var key = bypassKey(kind, pending[m]);
+        if (!Object.prototype.hasOwnProperty.call(bypassCounts, key)) bypassCounts[key] = {};
       }
       applyBypassUsage();
     });
@@ -2058,6 +2138,9 @@
     var m = /^var\(\s*--[^,()]+,([\s\S]+)\)$/.exec(raw);
     if (m) raw = m[1].trim();
     if (!raw || /var\(/.test(raw) || COLOUR_KEYWORDS.test(raw)) return null;
+    // The fallback is often rgb() already, and that needs no canvas.
+    var fallback = parseRgb(raw);
+    if (fallback) return fallback;
 
     var normalised = normaliseColour(raw);
     if (!normalised) return null;
@@ -2391,7 +2474,11 @@
       // app's own handlers. That also stops whatever would close the menu, so
       // close it here: 13.x holds the dropdown open with a class, and 11.x and
       // 12.00 open theirs on hover, where blurring is enough.
+      // Both calls: stopPropagation keeps the event from delegated handlers up
+      // the tree, which is how 11.07 and 12.00 bind logout. It does nothing to
+      // a handler bound to this very element, and the immediate form does.
       e.stopPropagation();
+      e.stopImmediatePropagation();
       for (var n = a; n && n !== document.body; n = n.parentElement) {
         if (n.classList && n.classList.contains('open')) n.classList.remove('open');
       }
@@ -2603,15 +2690,20 @@
 
   // opts.welcome marks the one time the panel opens unasked, after the first
   // sign-in on a server. It then says how to get back to it.
+  // opts.values is what the form starts from. Reset passes the defaults, so
+  // the form shows them without anything being saved until Save.
   function openSettings(opts) {
     if (panel) return;
     if (!document.body) return;
     var welcome = !!(opts && opts.welcome === true);
+    var values = (opts && opts.values) || CONFIG;
 
     panel = document.createElement('div');
     panel.setAttribute('data-cm-helper', 'true');
-    // The panel carries a data-cm-helper marker, which is exactly what stops the
-    // dark sheet recolouring it. So it has to pick its own palette.
+    // The panel is built from inline styles, and the dark sheet's !important
+    // rules still reach any element here that one of the app's selectors
+    // happens to match. So it picks a palette of its own for each mode rather
+    // than relying on the sheet leaving it alone.
     var skin = darkOn
       ? { card: '#1f2124', text: '#e8e8e8', muted: '#9a9a9a', line: '#34373b',
           field: '#141517', fieldLine: '#4a4d52', button: '#2a2d31', buttonLine: '#4a4d52' }
@@ -2713,7 +2805,7 @@
         container.appendChild(label);
 
         overridesField = document.createElement('textarea');
-        overridesField.value = overridesToText(CONFIG.labelOverrides || {});
+        overridesField.value = overridesToText(values.labelOverrides || {});
         overridesField.rows = 6;
         overridesField.style.cssText = 'width:100%;box-sizing:border-box;margin:6px 0 4px;padding:8px;' +
           'border:1px solid ' + skin.fieldLine + ';border-radius:4px;background:' + skin.field +
@@ -2722,7 +2814,7 @@
         return;
       }
 
-      var val = CONFIG[key];
+      var val = values[key];
       var el = document.createElement('input');
       if (typeof val === 'boolean') {
         el.type = 'checkbox';
@@ -2762,11 +2854,11 @@
       master.type = 'checkbox';
       master.style.cssText = 'width:16px;height:16px;margin:0;flex:0 0 auto';
       if (group.masterKind === 'factor') {
-        master.checked = Number(CONFIG[group.master]) > 1;
+        master.checked = Number(values[group.master]) > 1;
       } else if (group.masterKind === 'any') {
-        master.checked = group.masterKeys.some(function (key) { return !!CONFIG[key]; });
+        master.checked = group.masterKeys.some(function (key) { return !!values[key]; });
       } else {
-        master.checked = !!CONFIG[group.master];
+        master.checked = !!values[group.master];
       }
       header.appendChild(master);
       masters.push({ group: group, input: master });
@@ -2855,12 +2947,11 @@
     var save = button('Save', true);
 
     reset.addEventListener('click', function () {
-      Object.keys(DEFAULTS).forEach(function (k) { CONFIG[k] = cloneValue(DEFAULTS[k]); });
-      if (CONFIG.darkMode !== darkOn) setDark(CONFIG.darkMode);
-      saveConfig();
+      // Only the form goes back to the defaults. Nothing is saved until Save,
+      // so Cancel after a Reset still leaves the settings as they were. Every
+      // setting is on the form, so Save then writes every default.
       closeSettings();
-      applyAll();
-      openSettings();
+      openSettings({ welcome: welcome, values: cloneValue(DEFAULTS) });
     });
     cancel.addEventListener('click', closeSettings);
     save.addEventListener('click', function () {
@@ -3072,6 +3163,10 @@
 
   function onKeyDown(e) {
     if (e.key === 'Escape' && panel) {
+      // Consumed here, or the app also sees it and closes whatever it has open
+      // underneath the panel.
+      e.preventDefault();
+      e.stopPropagation();
       closeSettings();
       return;
     }
@@ -3119,27 +3214,95 @@
     openSettings({ welcome: true });
   }
 
+  // Every helper sheet is !important, and so are some of the app's own rules.
+  // At equal specificity the later sheet wins, so a sheet the app adds after
+  // ours would beat it, and the feature would look switched off for no reason.
+  // Whenever the set of app sheets changes, ours move to the end of <head>.
+  // A move re-parses the sheet, so nothing moves when they are already last.
+  var sheetsSeenAt = null;
+
+  function keepHelperSheetsLast() {
+    var signature = sheetSignature();
+    if (signature === sheetsSeenAt) return;
+    sheetsSeenAt = signature;
+    var head = document.head;
+    if (!head) return;
+    var mine = document.querySelectorAll('style[data-cm-helper]');
+    if (!mine.length) return;
+    // "Last" means after every app stylesheet in head, and in head at all: a
+    // sheet made at document-start can be sitting on <html>. Scripts and the
+    // title after ours are neither here nor there, and the app appends those
+    // all the time, so they must not count as a reason to move.
+    var kids = head.children;
+    var inPlace = true;
+    var seenMine = false;
+    for (var i = 0; inPlace && i < kids.length; i++) {
+      var kid = kids[i];
+      if (kid.getAttribute('data-cm-helper')) { seenMine = true; continue; }
+      var isSheet = kid.tagName === 'STYLE' ||
+        (kid.tagName === 'LINK' && /stylesheet/i.test(kid.getAttribute('rel') || ''));
+      if (seenMine && isSheet) inPlace = false;
+    }
+    for (var m = 0; inPlace && m < mine.length; m++) {
+      if (mine[m].parentNode !== head) inPlace = false;
+    }
+    if (inPlace) return;
+    for (var k = 0; k < mine.length; k++) head.appendChild(mine[k]);
+    log('moved ' + mine.length + ' helper sheets to the end of head');
+  }
+
+  // Each feature runs on its own, so one that throws on a version this code
+  // has never seen cannot take the rest of the sweep down with it. Before this
+  // one throw early in the sweep silently switched off everything after it,
+  // on every sweep. A feature that keeps throwing is given up on for this page
+  // load, and the console says so without needing debug on.
+  var FEATURE_FAILURE_CAP = 3;
+  var featureFailures = {};
+
+  function runFeature(name, fn) {
+    var failed = featureFailures[name] || 0;
+    if (failed >= FEATURE_FAILURE_CAP) return;
+    try {
+      fn();
+      featureFailures[name] = 0;
+    } catch (e) {
+      failed++;
+      featureFailures[name] = failed;
+      console.warn(TAG, name + ' failed' +
+        (failed >= FEATURE_FAILURE_CAP ? ', giving up on it for this page load' : ''), e);
+    }
+  }
+
   var sweepQueued = false;
 
   function sweep() {
     sweepQueued = false;
-    if (CONFIG.scaleCss) applyCssScaling();
-    applyPinnedMenu();
-    applyListFilters();
-    applyTemplateUsage();
-    applyBypassUsage();
-    applyFilePicker();
-    installUserMenuItem();
-    welcomeOnce();
-    watchFonts();
-    decorateSearchBox();
-    refreshDark();
-    var present = !!document.querySelector(SIGNIN_BUTTON);
-    // Off means off: the poll has to be stopped, not just left unstarted.
-    updateSignInWatch(CONFIG.fixSignIn && present);
-    watchTitle();
-    syncHostTitle();
-    updateHostBadge(present);
+    // First, before any sheet is rebuilt: a move re-parses a sheet, and so
+    // does a rebuild, so moving first means the dark sheet is parsed once. A
+    // sheet made later in this sweep is appended at the end regardless.
+    runFeature('sheetOrder', keepHelperSheetsLast);
+    if (CONFIG.scaleCss) runFeature('scaleCss', applyCssScaling);
+    runFeature('pinnedMenu', applyPinnedMenu);
+    runFeature('listFilters', applyListFilters);
+    runFeature('templateUsage', applyTemplateUsage);
+    runFeature('bypassUsage', applyBypassUsage);
+    runFeature('filePicker', applyFilePicker);
+    runFeature('userMenu', installUserMenuItem);
+    runFeature('welcome', welcomeOnce);
+    runFeature('fonts', watchFonts);
+    runFeature('searchBox', decorateSearchBox);
+    runFeature('darkMode', refreshDark);
+    runFeature('signIn', function () {
+      // Off means off: the poll has to be stopped, not just left unstarted.
+      updateSignInWatch(CONFIG.fixSignIn && !!document.querySelector(SIGNIN_BUTTON));
+    });
+    runFeature('hostTitle', function () {
+      watchTitle();
+      syncHostTitle();
+    });
+    runFeature('hostBadge', function () {
+      updateHostBadge(!!document.querySelector(SIGNIN_BUTTON));
+    });
   }
 
   function queueSweep() {
@@ -3154,17 +3317,22 @@
       nativeSetTimeout(observe, 0);
       return;
     }
+    // Ignore the helper's own nodes, coming or going, so the sweep cannot
+    // re-trigger itself. Teardown and the sheet re-ordering both remove them.
+    function isHelperNode(n) {
+      return n.nodeType === 1 && !!n.getAttribute && !!n.getAttribute('data-cm-helper');
+    }
     new MutationObserver(function (records) {
       for (var i = 0; i < records.length; i++) {
         var added = records[i].addedNodes;
         for (var k = 0; k < added.length; k++) {
-          // Ignore the helper's own nodes so the sweep cannot re-trigger itself.
-          var n = added[k];
-          if (n.nodeType === 1 && n.getAttribute && n.getAttribute('data-cm-helper')) continue;
+          if (isHelperNode(added[k])) continue;
           queueSweep();
           return;
         }
-        if (records[i].removedNodes.length) {
+        var removed = records[i].removedNodes;
+        for (var r = 0; r < removed.length; r++) {
+          if (isHelperNode(removed[r])) continue;
           queueSweep();
           return;
         }
@@ -3185,6 +3353,14 @@
   document.addEventListener('keydown', onKeyDown, true);
 
   darkOn = !!CONFIG.darkMode;
+
+  // The full dark sheet needs the app's stylesheets, which have not been
+  // parsed at document-start. The base rules alone are enough to keep the
+  // first paint dark instead of flashing white until DOMContentLoaded.
+  if (darkOn && (document.head || document.documentElement)) {
+    darkEl = makeStyle(DARK_ID);
+    darkEl.textContent = darkBaseTop();
+  }
 
   function start() {
     if (darkOn) setDark(true, false);
@@ -3217,6 +3393,38 @@
     refresh: applyAll,
     setDark: setDark,
     isDark: function () { return darkOn; },
+    // The pure helpers, reachable from test/ without a browser. Not an API:
+    // anything here can change between versions.
+    _internals: {
+      scale: scale,
+      scaleTimeList: scaleTimeList,
+      sameShape: sameShape,
+      cssValue: cssValue,
+      parseHotkey: parseHotkey,
+      matchesHotkey: matchesHotkey,
+      hotkeyLabel: hotkeyLabel,
+      normalizeLabel: normalizeLabel,
+      textToOverrides: textToOverrides,
+      overridesToText: overridesToText,
+      parseRgb: parseRgb,
+      hexToRgb: hexToRgb,
+      hslToRgb: hslToRgb,
+      recolour: recolour,
+      recolourGradient: recolourGradient,
+      recolourColourList: recolourColourList,
+      colourFromValue: colourFromValue,
+      byName: byName,
+      usageClauses: usageClauses,
+      usageCountPath: usageCountPath,
+      bypassPath: bypassPath,
+      bypassKey: bypassKey,
+      USAGE_KINDS: USAGE_KINDS,
+      onTemplateList: onTemplateList,
+      usageKind: usageKind,
+      syncHostTitle: syncHostTitle,
+      runFeature: runFeature,
+      sweep: sweep
+    },
     // In the page console on a screen that still looks wrong:
     //   copy(streamliner.auditDark())
     auditDark: function () {

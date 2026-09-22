@@ -114,6 +114,19 @@ and a signed build from addons.mozilla.org, neither of which is set up here.
 Safari is harder. A Safari extension has to be wrapped in a Mac app built with
 Xcode, and shipping it to anyone else needs a paid Apple developer account.
 
+## Development
+
+The pure parts of the script have tests that run in Node with nothing
+installed. They also check that the version agrees between `manifest.json`, the
+`@version` header and the settings panel.
+
+```
+node --test
+```
+
+Anything that needs real layout or the app's own stylesheets is still tested
+live, against the servers listed below.
+
 ## Tested Versions
 
 Streamliner is tested against the following versions of Scala Content Manager.
