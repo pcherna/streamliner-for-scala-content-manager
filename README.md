@@ -41,6 +41,14 @@ Adds a Used: count to items in the template list, that links to those messages.
 
 Breaks a Used: count into its parts in the list, such as 2 Channels and 1 Message. Each part links straight to what it counts, instead of via the Usage Dialog.
 
+### Section Links
+
+(Content Manager 13.x) The side-menu entry for the section you are in, such as Playlists, stays a link while you are deeper in that section. It takes you back to the section's list.
+
+### Timeslot Playlist Link
+
+The Timeslot Properties dialog links to its playlist again. Content Manager shows the name as plain text to a user who belongs to no workgroup, even when that user can open the playlist.
+
 ### Maintenance Files Fixes
 
 Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
@@ -55,7 +63,7 @@ Shows the URL of this Content Manager on the login page and on the tab title. Us
 
 ### Login Button Fix
 
-Fix a problem where autofill (e.g. from a password manager) can't login because Content Manager doesn't re-enable the disabled **Login** button in all cases.
+Fixes a problem where autofill, for example from a password manager, can't log in because Content Manager doesn't re-enable the disabled **Login** button in all cases. On 13.50 it also makes Enter sign in, so a password manager that submits with Enter works.
 
 ## Installing Streamliner
 

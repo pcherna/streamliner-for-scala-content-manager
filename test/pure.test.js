@@ -356,3 +356,124 @@ test('saveConfig writes only what differs from the defaults', () => {
   app.streamliner.save();
   same(JSON.parse(app.store.streamlinerConfig), { darkMode: true });
 });
+
+// An element with a working classList and attributes, as the menu and
+// sign-in code read them.
+function fakeEl(tag, attrs, classes) {
+  const cls = new Set(classes || []);
+  const at = Object.assign({}, attrs || {});
+  return {
+    tagName: tag.toUpperCase(),
+    id: '',
+    classList: {
+      add(c) { cls.add(c); },
+      remove(c) { cls.delete(c); },
+      contains(c) { return cls.has(c); }
+    },
+    getAttribute(k) { return Object.prototype.hasOwnProperty.call(at, k) ? at[k] : null; },
+    setAttribute(k, v) { at[k] = String(v); },
+    removeAttribute(k) { delete at[k]; }
+  };
+}
+
+test('section links: the current section stays a link only below its root', () => {
+  const app = load({ hash: '#playlists/123' });
+  const playlists = fakeEl('a', { href: '#playlists', tabindex: '-1' }, ['svg-group', 'disabled']);
+  const media = fakeEl('a', { href: '#media' }, ['svg-group']);
+  const anchors = [playlists, media];
+  app.document.querySelectorAll = (sel) => sel.startsWith('a.cm-helper-section-link')
+    ? anchors.filter((a) => a.classList.contains('cm-helper-section-link'))
+    : anchors.filter((a) => a.classList.contains('disabled'));
+  const { applySectionLinks } = app.internals;
+
+  applySectionLinks();
+  assert.equal(playlists.classList.contains('cm-helper-section-link'), true);
+  assert.equal(playlists.getAttribute('tabindex'), '0', 'reachable by keyboard too');
+  assert.equal(media.classList.contains('cm-helper-section-link'), false);
+
+  app.window.location.hash = '#playlists';
+  applySectionLinks();
+  assert.equal(playlists.classList.contains('cm-helper-section-link'), false, 'on the root a click goes nowhere');
+  assert.equal(playlists.getAttribute('tabindex'), '-1', 'the app\'s tabindex is put back');
+
+  app.window.location.hash = '#playlists/9';
+  applySectionLinks();
+  app.streamliner.config.sectionLinks = false;
+  applySectionLinks();
+  assert.equal(playlists.classList.contains('cm-helper-section-link'), false, 'off undoes it');
+});
+
+test('sign-in Enter: focuses the Login button under the id 13.50 looks for', () => {
+  const app = load();
+  const { onSignInEnter } = app.internals;
+  let focused = 0;
+  const button = fakeEl('button', {}, ['signIn']);
+  button.focus = () => { focused++; };
+  const box = { querySelector: (sel) => (sel === 'button.signIn' ? button : null), parentElement: null };
+  const input = { tagName: 'INPUT', type: 'password', parentElement: box };
+  let holder = null;
+  app.document.getElementById = () => holder;
+
+  onSignInEnter({ key: 'a', target: input });
+  assert.equal(focused, 0, 'only Enter');
+
+  onSignInEnter({ key: 'Enter', target: input });
+  assert.equal(focused, 1);
+  assert.equal(button.id, 'signIn');
+
+  button.classList.add('disabled');
+  onSignInEnter({ key: 'Enter', target: input });
+  assert.equal(focused, 1, 'a disabled button is left alone');
+  button.classList.remove('disabled');
+
+  holder = { id: 'signIn' };
+  onSignInEnter({ keyCode: 13, target: input });
+  assert.equal(focused, 1, 'another element already owns the id');
+  holder = null;
+
+  app.streamliner.config.fixSignIn = false;
+  onSignInEnter({ key: 'Enter', target: input });
+  assert.equal(focused, 1, 'off means off');
+});
+
+test('timeslot playlist link: a playlist the server returned is linked', () => {
+  const app = load();
+  const seen = [];
+  const Playlist = function () {};
+  Playlist.prototype.updateFields = function () { seen.push(this.accessViewPlaylist); };
+  let editorDetails = 0;
+  const Editor = function () {};
+  Editor.prototype.updatePlaylistDetails = function () { editorDetails++; mods['components/schedule/playlist'] = Playlist; };
+  const mods = { 'module/schedule/timeslotEditor': Editor, 'support/Resource': { PLAYLIST_VIEW: 'pv' } };
+  const req = (name) => mods[name];
+  req.defined = (name) => name in mods;
+  app.window.require = req;
+  let allowed = true;
+  app.window.App = { hasPermissionWithoutImplicit: (r) => allowed && r === 'pv' };
+  const { applyPlaylistLink } = app.internals;
+
+  // Not defined yet: the editor is hooked, and patches it the moment it exists.
+  applyPlaylistLink();
+  new Editor().updatePlaylistDetails();
+  assert.equal(editorDetails, 1, 'the original always runs');
+
+  const view = () => { const v = new Playlist(); v.playlist = { attributes: {} }; v.accessViewPlaylist = false; return v; };
+  let v = view();
+  v.updateFields(v.playlist.attributes);
+  assert.equal(seen.pop(), true, 'the success path gets the link');
+
+  v = view();
+  v.updateFields({ name: 'from options' });
+  assert.equal(seen.pop(), false, 'the error path is left alone');
+
+  allowed = false;
+  v = view();
+  v.updateFields(v.playlist.attributes);
+  assert.equal(seen.pop(), false, 'no playlist view permission, no link');
+  allowed = true;
+
+  app.streamliner.config.timeslotPlaylistLink = false;
+  v = view();
+  v.updateFields(v.playlist.attributes);
+  assert.equal(seen.pop(), false, 'off means off');
+});

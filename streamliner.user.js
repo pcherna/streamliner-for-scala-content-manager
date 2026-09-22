@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.41.0
+// @version      1.42.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -45,6 +45,7 @@
     // ---- login -----------------------------------------------------------
     // Makes the Sign In button react to a password manager filling the fields.
     // The app only enables Sign In from a keyup, which a fill does not produce.
+    // On 13.50 it also makes Enter sign in, which the app's own check misses.
     // The fields themselves are never touched: a server that renders them
     // readonly to block autofill (disableLoginAutocomplete) keeps that choice.
     fixSignIn: true,
@@ -89,6 +90,14 @@
     // Spells the Used: breakdown out in the row and links each part, instead of
     // going through Content Manager's dialog to reach the same links.
     bypassUsageDialog: true,
+
+    // On 13.x the side-menu entry for the section you are in stops being a
+    // link. This keeps it one while you are deeper in that section.
+    sectionLinks: true,
+
+    // The Timeslot Properties dialog names its playlist as plain text for a
+    // user in no workgroup, though the playlist opens fine. This links it.
+    timeslotPlaylistLink: true,
 
     // The Install File task's file picker: every file on one page, sorted
     // without regard to case, no warning icons, the file chooser opened by
@@ -175,7 +184,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.41.0';
+  var VERSION = '1.42.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -579,6 +588,37 @@
     notify(e.target, e.type);
   }
 
+  // Enter does not sign in on 13.50, whether a person or a password manager
+  // presses it. 11.07 and 12.00 submit on any Enter keyup, but 13.50 added
+  //   if (13 === key && document.activeElement === document.getElementById("signIn"))
+  // and its Login button has class signIn and no id, so the test never passes.
+  // There is no <form> either, so nothing else submits. The button gets the id
+  // it is looked up by, and takes focus before the app's document handler
+  // runs, which then signs in through its own submit and its own guard. This
+  // never submits anything itself, so the older versions, which submit on
+  // Enter already, still submit once.
+  function signInButtonFor(el) {
+    var node = el.parentElement;
+    for (var i = 0; i < ANCESTOR_DEPTH && node; i++, node = node.parentElement) {
+      var button = node.querySelector(SIGNIN_BUTTON);
+      if (button) return button;
+    }
+    return null;
+  }
+
+  function onSignInEnter(e) {
+    if (!CONFIG.fixSignIn) return;
+    if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    if (!isSignInInput(e.target)) return;
+    var button = signInButtonFor(e.target);
+    if (!button || button.classList.contains('disabled')) return;
+    var holder = document.getElementById('signIn');
+    if (holder && holder !== button) return;
+    if (!holder) button.id = 'signIn';
+    button.focus();
+    log('Enter in a sign-in field: focused the Login button');
+  }
+
   var pollTimer = null;
 
   function pollTick() {
@@ -887,6 +927,71 @@
       var existing = labelElementFor(a);
       if (existing && existing.textContent.trim() !== full) existing.textContent = full;
       a.removeAttribute('data-cm-full');
+    }
+  }
+
+  // --------------------------------------------------------- section links
+
+  // 13.50 disables the menu entry for the section you are in. Its loadView
+  // takes location.hash.split("/")[0], and every menu link with that href
+  // gets class disabled and tabindex -1, which light.css turns into
+  //   .svg-group.disabled { pointer-events: none }
+  // That is right on #playlists itself, where a click would go nowhere, and
+  // wrong on #playlists/123, where the entry is the way back to the list.
+  // So the entry is let through whenever the address is deeper than its href.
+  // The links navigate by their href alone, with no click handler of the
+  // app's to get past.
+  var SECTION_LINK_CLASS = 'cm-helper-section-link';
+  var SECTION_LINK_SELECTOR = 'a.svg-group.disabled, a.svg-active-group.disabled, ' +
+    'a.svg-templates-group.disabled';
+  var SECTION_LINK_CSS = 'a.' + SECTION_LINK_CLASS +
+    ' { pointer-events: auto !important; cursor: pointer !important; }';
+  var sectionLinkEl = null;
+
+  function markSectionLink(a) {
+    if (a.classList.contains(SECTION_LINK_CLASS)) return;
+    a.classList.add(SECTION_LINK_CLASS);
+    a.setAttribute('data-cm-tabindex', a.getAttribute('tabindex') || '');
+    a.setAttribute('tabindex', '0');
+  }
+
+  function unmarkSectionLink(a) {
+    a.classList.remove(SECTION_LINK_CLASS);
+    var saved = a.getAttribute('data-cm-tabindex');
+    if (saved === null) return;
+    if (saved) a.setAttribute('tabindex', saved);
+    else a.removeAttribute('tabindex');
+    a.removeAttribute('data-cm-tabindex');
+  }
+
+  function applySectionLinks() {
+    var hash = location.hash || '';
+    var root = hash.split('/')[0];
+    var deeper = !!root && hash !== root;
+
+    var marked = document.querySelectorAll('a.' + SECTION_LINK_CLASS);
+    for (var i = 0; i < marked.length; i++) {
+      var m = marked[i];
+      if (!CONFIG.sectionLinks || !deeper || m.getAttribute('href') !== root ||
+          !m.classList.contains('disabled')) unmarkSectionLink(m);
+    }
+
+    if (!CONFIG.sectionLinks) {
+      if (sectionLinkEl && sectionLinkEl.parentNode) sectionLinkEl.parentNode.removeChild(sectionLinkEl);
+      sectionLinkEl = null;
+      return;
+    }
+    if (!deeper) return;
+    var links = document.querySelectorAll(SECTION_LINK_SELECTOR);
+    var found = 0;
+    for (var k = 0; k < links.length; k++) {
+      if (links[k].getAttribute('href') !== root) continue;
+      markSectionLink(links[k]);
+      found++;
+    }
+    if (found && (!sectionLinkEl || !sectionLinkEl.isConnected) && (document.head || document.documentElement)) {
+      sectionLinkEl = makeStyle('cm-helper-section-links');
+      sectionLinkEl.textContent = SECTION_LINK_CSS;
     }
   }
 
@@ -1991,6 +2096,58 @@
     pickerTarget = null;
   }
 
+  // ------------------------------------------------ timeslot playlist link
+
+  // The Timeslot Properties dialog names its playlist with a link to it, or
+  // with plain text when components/schedule/playlist decides the user cannot
+  // view it. Outside super administrators it decides by workgroup: when the
+  // playlist has workgroups, the user needs one of them. A user whose role
+  // reaches the whole network may belong to no workgroup at all, and then
+  // always gets plain text, though the playlist opens fine from its list.
+  // 13.50 also makes that text ignore the pointer. On yk the session's
+  // userWorkgroups is empty for exactly such a user.
+  //
+  // The dialog has already asked the server for the playlist, and a
+  // successful answer is proof enough that the user can read it. So when
+  // updateFields receives the model's own attributes, which only the success
+  // path passes, and the user holds the playlist view permission, the link
+  // comes back. The error path passes the dialog's options and is left alone.
+  var playlistLinkPatched = false;
+  var playlistEditorHooked = false;
+
+  function patchPlaylistComponent() {
+    if (playlistLinkPatched) return true;
+    var Playlist = appRequire('components/schedule/playlist');
+    if (!Playlist || !Playlist.prototype) return false;
+    playlistLinkPatched = true;
+    wrapBefore(Playlist.prototype, 'updateFields', function (attrs) {
+      if (!CONFIG.timeslotPlaylistLink || this.accessViewPlaylist) return;
+      if (!this.playlist || !attrs || attrs !== this.playlist.attributes) return;
+      var Resource = appRequire('support/Resource');
+      var app = window.App;
+      if (!Resource || !app || typeof app.hasPermissionWithoutImplicit !== 'function') return;
+      if (!app.hasPermissionWithoutImplicit(Resource.PLAYLIST_VIEW)) return;
+      this.accessViewPlaylist = true;
+    });
+    log('timeslot playlist link: patched');
+    return true;
+  }
+
+  // The component is only defined once a dialog first requires it, and its
+  // playlist request is already on its way by then. A patch from the next
+  // sweep could land after the answer. The editor's updatePlaylistDetails
+  // creates the component and starts the request in one go, so a hook right
+  // after it patches in time for the first dialog as well.
+  function applyPlaylistLink() {
+    if (patchPlaylistComponent() || playlistEditorHooked) return;
+    var Editor = appRequire('module/schedule/timeslotEditor');
+    if (!Editor || !Editor.prototype) return;
+    playlistEditorHooked = true;
+    wrapAfter(Editor.prototype, 'updatePlaylistDetails', function () {
+      patchPlaylistComponent();
+    });
+  }
+
   // ------------------------------------------------------------- dark mode
 
   // A real dark theme, not a filter. Applying `filter: invert()` to <html>
@@ -2718,7 +2875,7 @@
   var FIELD_NOTES = {
     speedFactor: 'Higher is faster. 1 turns animation scaling off.',
     scaleTimeouts: 'Also speeds up dialogs and menus on 13.x. Affects app timers, so try it before leaving it on.',
-    fixSignIn: 'Only 11.x needs it. 13.x ships the button enabled.',
+    fixSignIn: '11.x needs it for the button, 13.50 for Enter.',
     pinnedMenuWidth: 'Wider menus take width from the page content.',
     listFilterHeight: 'How tall a filter list may get before it scrolls.',
     templateUsageConcurrency: 'How many usage counts to fetch at once. Higher is faster and leans harder on the server.',
@@ -2785,6 +2942,22 @@
       advanced: []
     },
     {
+      title: 'Section Links',
+      master: 'sectionLinks',
+      blurb: '(Content Manager 13.x) The side-menu entry for the section you are in, ' +
+             'such as Playlists, stays a link while you are deeper in that section. It ' +
+             'takes you back to the section\'s list.',
+      advanced: []
+    },
+    {
+      title: 'Timeslot Playlist Link',
+      master: 'timeslotPlaylistLink',
+      blurb: 'The Timeslot Properties dialog links to its playlist again. Content ' +
+             'Manager shows the name as plain text to a user who belongs to no ' +
+             'workgroup, even when that user can open the playlist.',
+      advanced: []
+    },
+    {
       title: 'Maintenance Files Fixes',
       master: 'maintenanceFilesFixes',
       blurb: 'Improves the file selection for a maintenance job\'s Install File task. It ' +
@@ -2814,9 +2987,10 @@
     {
       title: 'Login Button Fix',
       master: 'fixSignIn',
-      blurb: 'Fix a problem where autofill (e.g. from a password manager) can\'t login ' +
-             'because Content Manager doesn\'t re-enable the disabled Login button in ' +
-             'all cases.',
+      blurb: 'Fixes a problem where autofill, for example from a password manager, can\'t ' +
+             'log in because Content Manager doesn\'t re-enable the disabled Login button ' +
+             'in all cases. On 13.50 it also makes Enter sign in, so a password manager ' +
+             'that submits with Enter works.',
       advanced: []
     },
     {
@@ -3486,10 +3660,12 @@
     runFeature('sheetOrder', keepHelperSheetsLast);
     if (CONFIG.scaleCss) runFeature('scaleCss', applyCssScaling);
     runFeature('pinnedMenu', applyPinnedMenu);
+    runFeature('sectionLinks', applySectionLinks);
     runFeature('listFilters', applyListFilters);
     runFeature('templateUsage', applyTemplateUsage);
     runFeature('bypassUsage', applyBypassUsage);
     runFeature('filePicker', applyFilePicker);
+    runFeature('playlistLink', applyPlaylistLink);
     runFeature('userMenu', installUserMenuItem);
     runFeature('welcome', welcomeOnce);
     runFeature('fonts', watchFonts);
@@ -3554,6 +3730,8 @@
   document.addEventListener('input', onValueEvent, true);
   document.addEventListener('change', onValueEvent, true);
   document.addEventListener('keydown', onKeyDown, true);
+  // On window, in capture, so it runs before the app's handler on document.
+  window.addEventListener('keyup', onSignInEnter, true);
 
   darkOn = !!CONFIG.darkMode;
 
@@ -3615,6 +3793,9 @@
       recolour: recolour,
       recolourGradient: recolourGradient,
       recolourColourList: recolourColourList,
+      applySectionLinks: applySectionLinks,
+      onSignInEnter: onSignInEnter,
+      applyPlaylistLink: applyPlaylistLink,
       absoluteUrls: absoluteUrls,
       darkDeclarations: darkDeclarations,
       keepLastCopies: keepLastCopies,
