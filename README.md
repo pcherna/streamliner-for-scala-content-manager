@@ -9,7 +9,7 @@ Streamliner does not modify the Content Manager server or any of its data. Excep
 * Bypass Usage Dialog
 * Maintenance Files Fixes
 
-To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down.
+To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. The settings open by themselves once, the first time you sign in to each Content Manager server after installing Streamliner.
 
 ## Use of AI Coding Tools
 

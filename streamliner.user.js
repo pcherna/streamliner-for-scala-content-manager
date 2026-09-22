@@ -109,6 +109,8 @@
   // A frozen copy of the shipped defaults, so the settings panel can reset.
   var DEFAULTS = JSON.parse(JSON.stringify(CONFIG));
   var CONFIG_KEY = 'streamlinerConfig';
+  // Set once the settings have been shown unasked, so that happens only once.
+  var WELCOME_KEY = 'streamlinerWelcomed';
 
   // Settings live in localStorage on the Content Manager origin. That works the
   // same in the extension and the userscript: the content script runs in the
@@ -2599,9 +2601,12 @@
     '<circle cx="0" cy="24" r="8.5"/> </g> </svg>'
   ].join('');
 
-  function openSettings() {
+  // opts.welcome marks the one time the panel opens unasked, after the first
+  // sign-in on a server. It then says how to get back to it.
+  function openSettings(opts) {
     if (panel) return;
     if (!document.body) return;
+    var welcome = !!(opts && opts.welcome === true);
 
     panel = document.createElement('div');
     panel.setAttribute('data-cm-helper', 'true');
@@ -2630,7 +2635,7 @@
       'position:sticky;top:0;background:' + skin.card + ';';
     var title = document.createElement('div');
     title.style.cssText = 'font-size:15px;font-weight:650';
-    title.textContent = 'Streamliner Settings';
+    title.textContent = 'Streamliner for Scala Content Manager Settings';
     head.appendChild(title);
 
     var version = document.createElement('div');
@@ -2643,6 +2648,15 @@
     scope.style.cssText = 'color:' + skin.muted + ';font-size:12px';
     scope.textContent = '(Settings apply to ' + window.location.host + ' only)';
     head.appendChild(scope);
+
+    if (welcome) {
+      var hint = document.createElement('div');
+      hint.style.cssText = 'font-size:12px;margin-top:8px';
+      hint.textContent = 'To return to this settings dialog, click your username in Content ' +
+        'Manager\'s upper-right, and select the ' + SETTINGS_LABEL + ' entry that is added ' +
+        'to that drop-down.';
+      head.appendChild(hint);
+    }
 
     // Sticky counts as positioned, so this anchors to the header without the
     // header needing to be restructured. Decorative: the title already names it.
@@ -3073,6 +3087,38 @@
 
   // ------------------------------------------------------------------ wire
 
+  // Opens the settings once per server, right after the first sign-in. Anyone
+  // who has saved settings already knows where they are, so that counts as
+  // welcomed. Without working storage the flag could never stick, and the
+  // panel would open on every load, so then it never opens at all.
+  //
+  // The user menu alone does not mean signed in. 12.00 renders it, Logout and
+  // all, hidden inside the login page, so the settings entry is there too. The
+  // sign-in button is what marks the login page on every version.
+  var welcomeChecked = false;
+
+  function signedIn() {
+    if (document.querySelector(SIGNIN_BUTTON)) return false;
+    if (/^#login\b/.test(location.hash)) return false;
+    return !!document.querySelector('[data-streamliner-usermenu]');
+  }
+
+  function welcomeOnce() {
+    if (welcomeChecked || panel || !signedIn()) return;
+    welcomeChecked = true;
+    try {
+      var store = window.localStorage;
+      if (store.getItem(WELCOME_KEY)) return;
+      var known = store.getItem(CONFIG_KEY) !== null;
+      store.setItem(WELCOME_KEY, '1');
+      if (store.getItem(WELCOME_KEY) !== '1' || known) return;
+    } catch (e) {
+      return;
+    }
+    log('first visit: opening the settings');
+    openSettings({ welcome: true });
+  }
+
   var sweepQueued = false;
 
   function sweep() {
@@ -3084,6 +3130,7 @@
     applyBypassUsage();
     applyFilePicker();
     installUserMenuItem();
+    welcomeOnce();
     watchFonts();
     decorateSearchBox();
     refreshDark();
