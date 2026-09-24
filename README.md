@@ -8,6 +8,7 @@ Streamliner does not modify the Content Manager server or any of its data. Excep
 * Template Usage
 * Bypass Usage Dialog
 * Maintenance Files Fixes
+* Search Suggestions
 
 To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. The settings open by themselves once, the first time you sign in to each Content Manager server after installing Streamliner.
 
@@ -32,6 +33,10 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 ### List Filters
 
 The various list filters only show the first several entries, with the rest hidden behind Show More. Now all choices are shown initially, in a box that scrolls.
+
+### Search Suggestions
+
+Fixes a range of misbehaviors in the suggestions that a list's search box offers as you type. For example, a search could end up using a full media name that you never picked. Enter now searches for what you typed. Down opens the suggestions, and the arrow keys or a click pick one and search for it. Tab leaves the box without picking. On 13.50, picking a suggestion also runs the search, where Content Manager only fills in the box.
 
 ### Template Usage
 

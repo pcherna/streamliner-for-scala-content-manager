@@ -477,3 +477,154 @@ test('timeslot playlist link: a playlist the server returned is linked', () => {
   v.updateFields(v.playlist.attributes);
   assert.equal(seen.pop(), false, 'off means off');
 });
+
+// A stand-in for a Bootstrap typeahead: the input, the last query, and a menu
+// whose find('.active') answers with the one active item, if any.
+function fakeTypeahead(value, query, activeItem) {
+  const input = { value };
+  const menu = {
+    active: activeItem || null,
+    find() {
+      const hit = menu.active ? [menu.active] : [];
+      hit.removeClass = () => { menu.active = null; return hit; };
+      return hit;
+    }
+  };
+  return { $element: [input], $menu: menu, query, options: { minLength: 3 }, input };
+}
+
+test('search suggestions: a reply is stale unless the box still wants it', () => {
+  const { suggestionsStale } = load().streamliner._internals;
+  const ta = fakeTypeahead('promo', 'promo');
+  assert.equal(suggestionsStale(ta, ta.input), false, 'focused, unchanged, long enough');
+  assert.equal(suggestionsStale(ta, {}), true, 'box lost focus');
+  ta.__cmSettled = true;
+  assert.equal(suggestionsStale(ta, ta.input), true, 'Enter since the lookup');
+  const empty = fakeTypeahead('', '');
+  assert.equal(suggestionsStale(empty, empty.input), true, 'box emptied');
+  const short = fakeTypeahead('pr', 'pr');
+  assert.equal(suggestionsStale(short, short.input), true, 'under minLength');
+  const changed = fakeTypeahead('promos', 'promo');
+  assert.equal(suggestionsStale(changed, changed.input), true, 'text changed since the lookup');
+});
+
+test('search suggestions: Enter or Tab drops a hover-only highlight and keeps a keyed one', () => {
+  const { settleOnSelectKey } = load().streamliner._internals;
+  const hovered = {};
+  const ta = fakeTypeahead('promo', 'promo', hovered);
+  settleOnSelectKey(ta);
+  assert.equal(ta.$menu.active, null);
+  assert.equal(ta.__cmSettled, true);
+
+  const keyed = {};
+  const tb = fakeTypeahead('promo', 'promo', keyed);
+  tb.__cmKeyedItem = keyed;
+  settleOnSelectKey(tb);
+  assert.equal(tb.$menu.active, keyed);
+});
+
+test('search suggestions: switched off, Enter or Tab changes nothing', () => {
+  const { settleOnSelectKey } = withConfig({ fixSearchSuggestions: false }).streamliner._internals;
+  const hovered = {};
+  const ta = fakeTypeahead('promo', 'promo', hovered);
+  settleOnSelectKey(ta);
+  assert.equal(ta.$menu.active, hovered);
+  assert.equal(ta.__cmSettled, undefined);
+});
+
+// A menu with real items for the keyboard tests: each item carries its value
+// and classes, and find() answers 'li' and '.active' the way jQuery would.
+function fakeMenuTypeahead(value, values, opts) {
+  opts = opts || {};
+  const items = values.map((v) => ({
+    value: v,
+    className: '',
+    getAttribute(k) { return k === 'data-value' ? this.value : null; }
+  }));
+  const wrap = (list) => Object.assign(list.slice(), {
+    eq(n) { return wrap(list[n] ? [list[n]] : []); },
+    addClass(c) { list.forEach((it) => { if (!it.className.split(' ').includes(c)) it.className = (it.className + ' ' + c).trim(); }); return this; },
+    removeClass(c) { list.forEach((it) => { it.className = it.className.split(' ').filter((x) => x !== c).join(' '); }); return this; }
+  });
+  const menu = {
+    find(sel) {
+      if (sel === 'li') return wrap(items);
+      return wrap(items.filter((it) => it.className.split(' ').includes('active')));
+    }
+  };
+  const input = { value };
+  const ta = {
+    $element: [input], $menu: menu, query: value, options: { minLength: 3 },
+    shown: !!opts.shown, lookups: 0,
+    show() { this.shown = true; return this; },
+    hide() { this.shown = false; return this; },
+    lookup() { this.lookups++; return this; }
+  };
+  return { ta, input, items };
+}
+
+test('search suggestions: Down on a closed menu reopens cached items with the first chosen', () => {
+  const { suggestionKeyDown } = load().streamliner._internals;
+  const { ta, items } = fakeMenuTypeahead('yukon', ['a yukon', 'b yukon']);
+  ta.__cmMenuQuery = 'yukon';
+  assert.equal(suggestionKeyDown(ta, 'ArrowDown'), true);
+  assert.equal(ta.shown, true);
+  assert.equal(ta.lookups, 0);
+  assert.equal(items[0].className, 'active');
+  assert.equal(ta.__cmKeyedItem, items[0]);
+});
+
+test('search suggestions: Down asks for fresh items when the text changed', () => {
+  const { suggestionKeyDown } = load().streamliner._internals;
+  const { ta } = fakeMenuTypeahead('yukon', ['a yukon']);
+  ta.__cmMenuQuery = 'yuk';
+  assert.equal(suggestionKeyDown(ta, 'ArrowDown'), true);
+  assert.equal(ta.shown, false);
+  assert.equal(ta.lookups, 1);
+  assert.equal(ta.__cmOpenOnReply, true);
+});
+
+test('search suggestions: Down under three characters is swallowed and opens nothing', () => {
+  const { suggestionKeyDown } = load().streamliner._internals;
+  const { ta } = fakeMenuTypeahead('yu', ['a yukon']);
+  ta.__cmMenuQuery = 'yu';
+  assert.equal(suggestionKeyDown(ta, 'ArrowDown'), true);
+  assert.equal(ta.shown, false);
+  assert.equal(ta.lookups, 0);
+});
+
+test('search suggestions: Tab closes an open menu and lets focus move', () => {
+  const { suggestionKeyDown } = load().streamliner._internals;
+  const { ta } = fakeMenuTypeahead('yukon', ['a yukon'], { shown: true });
+  assert.equal(suggestionKeyDown(ta, 'Tab'), false);
+  assert.equal(ta.shown, false);
+  assert.equal(ta.__cmSettled, true);
+});
+
+test('search suggestions: Enter notes whether its keypress will search', () => {
+  const { suggestionKeyDown } = load().streamliner._internals;
+  const open = fakeMenuTypeahead('yukon', ['a yukon'], { shown: true });
+  suggestionKeyDown(open.ta, 'Enter');
+  assert.equal(open.ta.__cmEnterSearched, false, 'the plugin cancels the keydown');
+  const closed = fakeMenuTypeahead('yukon', ['a yukon']);
+  suggestionKeyDown(closed.ta, 'Enter');
+  assert.equal(closed.ta.__cmEnterSearched, true);
+});
+
+test('search suggestions: switched off, the keys are left to the page', () => {
+  const { suggestionKeyDown } = withConfig({ fixSearchSuggestions: false }).streamliner._internals;
+  const { ta } = fakeMenuTypeahead('yukon', ['a yukon'], { shown: true });
+  assert.equal(suggestionKeyDown(ta, 'Tab'), false);
+  assert.equal(ta.shown, true);
+  const closed = fakeMenuTypeahead('yukon', ['a yukon']);
+  assert.equal(suggestionKeyDown(closed.ta, 'ArrowDown'), false);
+  assert.equal(closed.ta.lookups, 0);
+});
+
+test('search suggestions: Escape keeps a reply still on its way from opening the menu', () => {
+  const { suggestionKeyDown, suggestionsStale } = load().streamliner._internals;
+  const { ta, input } = fakeMenuTypeahead('yukon', ['a yukon']);
+  assert.equal(suggestionsStale(ta, input), false);
+  assert.equal(suggestionKeyDown(ta, 'Escape'), false, 'the plugin still closes the menu');
+  assert.equal(suggestionsStale(ta, input), true);
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.42.0
+// @version      1.43.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -81,6 +81,10 @@
     // Shows a long filter list in full, in a box that scrolls.
     scrollListFilters: true,
     listFilterHeight: '220px',
+
+    // Keeps a late autocomplete reply from opening the search box's menu, and
+    // Enter from taking a suggestion only the mouse pointer rests on.
+    fixSearchSuggestions: true,
 
     // Adds the "Used:" line the template list is missing. Costs one request
     // per list page, plus one per template that actually has messages.
@@ -184,7 +188,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.42.0';
+  var VERSION = '1.43.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -1038,6 +1042,205 @@
   function removeListFilters() {
     if (filtersEl && filtersEl.parentNode) filtersEl.parentNode.removeChild(filtersEl);
     filtersEl = null;
+  }
+
+  // ----------------------------------------------------- search suggestions
+
+  // The list search box is a Bootstrap 2 typeahead. Its autocomplete request
+  // waits out a 300ms debounce, and the reply opens the menu whether or not it
+  // is still wanted: after Enter has searched, under a box emptied since, or
+  // once the box has lost focus. The app's select takes the menu's .active
+  // item whenever the menu is visible, and only a hover sets .active, which
+  // Chrome also fires when the menu opens under a still pointer. Enter then
+  // puts that item's full name in the box instead of what was typed.
+  //
+  // A late reply is dropped. Enter keeps a suggestion only when the arrow keys
+  // chose it, and a click still picks one. Tab never picks: with the menu
+  // open the plugin cancels its keydown, which keeps focus in the box and
+  // lets the keyup select, so the menu is closed before the plugin sees it.
+  // Down opens a closed menu with its first item chosen. Escape, like Enter,
+  // means no reply still on its way may open the menu.
+  //
+  // 13.50 searches on the Enter keypress and no longer listens for
+  // typeahead:selected. With the menu open the plugin cancels Enter's
+  // keydown, so there is no keypress, and a pick by Enter or by a click
+  // filled the box without searching. Every pick there now gets the keypress
+  // the view searches on, unless Enter with the menu closed already had one.
+  //
+  // lookup, process, next and prev are called through the prototype, so the
+  // hooks reach a box that already exists. The key handlers are bound once
+  // per box at construction, which is why keys are caught by listeners.
+  var suggestJq = null;
+  var suggestBoundTo = null;
+
+  function suggestionsStale(ta, active) {
+    if (ta.__cmSettled) return true;
+    var el = ta.$element && ta.$element[0];
+    if (!el || el !== active) return true;
+    var value = String(el.value || '');
+    var min = (ta.options && ta.options.minLength) || 1;
+    return value.length < min || value !== ta.query;
+  }
+
+  // The plugin and each box's data belong to the jQuery that carries
+  // fn.typeahead. The app's own module comes first, window.jQuery second.
+  function typeaheadJquery() {
+    var list = [appRequire('jquery'), window.jQuery];
+    for (var i = 0; i < list.length; i++) {
+      var jq = list[i];
+      if (jq && jq.fn && jq.fn.typeahead && jq.fn.typeahead.Constructor) return jq;
+    }
+    return null;
+  }
+
+  // Looked up on every sweep. 11.07 also loads bootstrap.js as a plain script,
+  // whose typeahead main.js later replaces with its own.
+  function applySearchSuggestions() {
+    var jq = typeaheadJquery();
+    if (!jq) return;
+    suggestJq = jq;
+    var proto = jq.fn.typeahead.Constructor.prototype;
+    if (proto.__cmHelperPatched) return;
+    proto.__cmHelperPatched = true;
+
+    // Only a keystroke that changes the text runs lookup, and Down.
+    wrapBefore(proto, 'lookup', function () {
+      this.__cmSettled = false;
+      this.__cmOpenOnReply = false;
+    });
+    // No results makes the plugin hide the menu, or leave it hidden.
+    wrapBefore(proto, 'process', function () {
+      this.__cmKeyedItem = null;
+      if (!CONFIG.fixSearchSuggestions || !suggestionsStale(this, document.activeElement)) return;
+      log('search suggestions: dropped a late reply');
+      return [[]];
+    });
+    // The menu keeps its items once hidden, so Down can show them again
+    // while the text is the same.
+    wrapAfter(proto, 'process', function () {
+      if (!this.shown) return;
+      this.__cmMenuQuery = this.query;
+      if (this.__cmOpenOnReply) highlightFirst(this);
+      this.__cmOpenOnReply = false;
+    });
+    function rememberKeyed() {
+      this.__cmKeyedItem = (this.$menu && this.$menu.find('.active')[0]) || null;
+    }
+    wrapAfter(proto, 'next', rememberKeyed);
+    wrapAfter(proto, 'prev', rememberKeyed);
+    log('search suggestions: patched');
+  }
+
+  function bindSuggestionPicks(jq) {
+    if (suggestBoundTo === jq) return;
+    suggestBoundTo = jq;
+    jq(document).on('typeahead:selected', function (e) {
+      if (!CONFIG.fixSearchSuggestions) return;
+      pickSelected(jq, e.target);
+    });
+  }
+
+  function highlightFirst(ta) {
+    var items = ta.$menu.find('li');
+    ta.$menu.find('.active').removeClass('active');
+    var first = items.eq(0);
+    first.addClass('active');
+    ta.__cmKeyedItem = first[0] || null;
+  }
+
+  // Whether the app searches on typeahead:selected itself. 11.07 and 12.00
+  // delegate it from the search view. 13.50 does not bind it at all.
+  function appHandlesSelected(jq, input) {
+    for (var node = input.parentNode; node && node.nodeType === 1; node = node.parentNode) {
+      var events = jq._data(node, 'events');
+      if (events && events['typeahead:selected']) return true;
+    }
+    return false;
+  }
+
+  // 13.50 only. A category cannot become a filter there, so the typed text
+  // comes back. The keypress waits until select has hidden the menu: with
+  // the menu open, the plugin's own keypress stops propagation.
+  function pickSelected(jq, input) {
+    var ta = jq(input).data('typeahead');
+    if (!ta || appHandlesSelected(jq, input)) return;
+    var searched = ta.__cmEnterSearched;
+    ta.__cmEnterSearched = false;
+    if (ta.queryCat && ta.queryCat.isCat) {
+      input.value = ta.query || '';
+      log('search suggestions: kept the typed text for a category');
+      return;
+    }
+    if (searched) return;
+    nativeSetTimeout(function () {
+      jq(input).trigger(jq.Event('keypress', { which: 13, keyCode: 13 }));
+      log('search suggestions: searched the pick');
+    }, 0);
+  }
+
+  // Returns true when the key is used up here, and the page must not see it.
+  function suggestionKeyDown(ta, key) {
+    if (!CONFIG.fixSearchSuggestions || !ta || !ta.$menu) return false;
+    var input = ta.$element && ta.$element[0];
+    if (!input) return false;
+    if (key === 'ArrowDown' && !ta.shown) {
+      var value = String(input.value || '');
+      var min = (ta.options && ta.options.minLength) || 1;
+      if (value.length < min) return true;
+      if (ta.__cmMenuQuery === value && ta.$menu.find('li').length) {
+        ta.show();
+        highlightFirst(ta);
+      } else {
+        ta.lookup();
+        ta.__cmOpenOnReply = true;
+      }
+      return true;
+    }
+    if (key === 'Tab' && ta.shown) {
+      ta.hide();
+      ta.__cmSettled = true;
+      return false;
+    }
+    // The plugin cancels Enter's keydown only while the menu is open, and a
+    // cancelled keydown has no keypress to search on.
+    if (key === 'Enter') ta.__cmEnterSearched = !ta.shown;
+    if (key === 'Escape') ta.__cmSettled = true;
+    return false;
+  }
+
+  function suggestionTypeahead(target) {
+    if (!suggestJq || !target || target.tagName !== 'INPUT') return null;
+    return suggestJq(target).data('typeahead') || null;
+  }
+
+  // Runs before the plugin's keydown on the box.
+  function onSuggestionKeyDown(e) {
+    if (e.key !== 'ArrowDown' && e.key !== 'Tab' && e.key !== 'Enter' && e.key !== 'Escape') return;
+    var ta = suggestionTypeahead(e.target);
+    if (!ta) return;
+    bindSuggestionPicks(suggestJq);
+    if (!suggestionKeyDown(ta, e.key)) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function settleOnSelectKey(ta) {
+    if (!CONFIG.fixSearchSuggestions || !ta || !ta.$menu) return;
+    ta.__cmSettled = true;
+    var active = ta.$menu.find('.active');
+    if (!active.length || active[0] === ta.__cmKeyedItem) return;
+    active.removeClass('active');
+    log('search suggestions: kept the typed text');
+  }
+
+  // Runs before the app's own keyup on the box, which calls select.
+  function onSuggestionKey(e) {
+    var enter = e.key === 'Enter' || e.keyCode === 13;
+    var tab = e.key === 'Tab' || e.keyCode === 9;
+    if (!enter && !tab) return;
+    var ta = suggestionTypeahead(e.target);
+    if (!ta) return;
+    settleOnSelectKey(ta);
   }
 
   // --------------------------------------------------------- template usage
@@ -2272,6 +2475,11 @@
       '.mdc-checkbox::before, .mdc-checkbox::after {',
       '  background-color: #ffffff !important; }'
     ].concat(darkLogoSwaps());
+    // The search suggestions mark the chosen item #eee, which the surface
+    // mapping turns into the menu's own near-black.
+    lines.push('html body .freeTextSearch .dropdown-menu li.active > a,',
+      'html body .freeTextSearch .dropdown-menu li:hover > a {',
+      '  background: ' + cssValue('pinnedHoverColor', 'background-color') + ' !important; }');
     if (CONFIG.darkModeInvertLogos) {
       lines.push(DARK_LOGO_SELECTOR + ' { filter: invert(1) hue-rotate(180deg) !important; }');
     }
@@ -2925,6 +3133,15 @@
              'hidden behind Show More. Now all choices are shown initially, in a box that ' +
              'scrolls.',
       advanced: ['listFilterHeight']
+    },
+    {
+      title: 'Search Suggestions',
+      master: 'fixSearchSuggestions',
+      blurb: 'Fixes a range of misbehaviors in the search box\'s suggestions, such as a ' +
+             'search using a media name or category you never picked. Enter searches for ' +
+             'what you typed. Down opens the suggestions, arrow keys or a click pick one, ' +
+             'and Tab leaves the box without picking.',
+      advanced: []
     },
     {
       title: 'Template Usage',
@@ -3662,6 +3879,7 @@
     runFeature('pinnedMenu', applyPinnedMenu);
     runFeature('sectionLinks', applySectionLinks);
     runFeature('listFilters', applyListFilters);
+    runFeature('searchSuggestions', applySearchSuggestions);
     runFeature('templateUsage', applyTemplateUsage);
     runFeature('bypassUsage', applyBypassUsage);
     runFeature('filePicker', applyFilePicker);
@@ -3732,6 +3950,8 @@
   document.addEventListener('keydown', onKeyDown, true);
   // On window, in capture, so it runs before the app's handler on document.
   window.addEventListener('keyup', onSignInEnter, true);
+  window.addEventListener('keydown', onSuggestionKeyDown, true);
+  window.addEventListener('keyup', onSuggestionKey, true);
 
   darkOn = !!CONFIG.darkMode;
 
@@ -3795,6 +4015,10 @@
       recolourColourList: recolourColourList,
       applySectionLinks: applySectionLinks,
       onSignInEnter: onSignInEnter,
+      suggestionsStale: suggestionsStale,
+      settleOnSelectKey: settleOnSelectKey,
+      suggestionKeyDown: suggestionKeyDown,
+      highlightFirst: highlightFirst,
       applyPlaylistLink: applyPlaylistLink,
       absoluteUrls: absoluteUrls,
       darkDeclarations: darkDeclarations,
