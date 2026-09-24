@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.43.0
+// @version      1.44.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -103,6 +103,10 @@
     // user in no workgroup, though the playlist opens fine. This links it.
     timeslotPlaylistLink: true,
 
+    // Player Properties offers Generate Plan while there is nothing to save,
+    // so the plan can be made without going back to the player list.
+    playerGeneratePlan: true,
+
     // The Install File task's file picker: every file on one page, sorted
     // without regard to case, no warning icons, the file chooser opened by
     // Upload, and a fresh upload selected as soon as it appears.
@@ -188,7 +192,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.43.0';
+  var VERSION = '1.44.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -2351,6 +2355,181 @@
     });
   }
 
+  // ------------------------------------------------- player generate plan
+
+  // Player Properties shows Reset, Save Changes and Save & Close only while
+  // there are unsaved changes. Otherwise that corner is empty, and generating
+  // the plan means going back to the player list. This fills the empty corner
+  // with the list's own Generate Plan button.
+  //
+  // All three versions hide the header's .actions in their stylesheet and
+  // toggle it with jQuery's show() and hide(). show() leaves an inline
+  // display: block, so CSS alone can tell the two states apart, and no
+  // observer has to watch the style attribute. The button sits in a second
+  // .actions after the app's, which gives it the app's own float and button
+  // styling, dark mode included. The app shows and hides that one as well,
+  // since it finds every .actions in the view, so the helper rule is
+  // !important to beat the inline style.
+  //
+  // The request is the list's own: a Storage call turns the player id into a
+  // key, and SynchronizePlayer starts the plan for that key. The list offers
+  // the button to holders of the player sync permission, and hides it for a
+  // disabled player, for one in maintenance, and on 12.00 and later while the
+  // player licenses are exceeded. All of those apply here. The button stays
+  // hidden until both the license and the player have been checked.
+  var GENPLAN_CLASS = 'cm-helper-genplan';
+  var GENPLAN_CSS = [
+    '.detail > .header > .actions.' + GENPLAN_CLASS + ' { display: block !important; }',
+    '.detail > .header > .actions:not(.' + GENPLAN_CLASS + ')[style*="block"] ~ .' + GENPLAN_CLASS + ',',
+    '.detail > .header > .actions.' + GENPLAN_CLASS + ':not([data-license="ok"][data-player="ok"])',
+    '  { display: none !important; }'
+  ].join('\n');
+  var genPlanStyleEl = null;
+  var playerDetailPatched = false;
+
+  function playerDetailId() {
+    var m = /^#player\/([^\/?]+)/.exec(location.hash || '');
+    return m && m[1] !== 'multi' ? decodeURIComponent(m[1]) : null;
+  }
+
+  function removeGeneratePlan() {
+    var old = document.querySelectorAll('.' + GENPLAN_CLASS);
+    for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+  }
+
+  function generatePlan(id, button) {
+    var jq = window.jQuery;
+    var Models = appRequire('models/model');
+    var app = window.App;
+    if (!jq || !Models || !Models.Storage || !Models.SynchronizePlayer || !app) return;
+    var t = function (key) { return jq.i18n.prop(key); };
+    var busy = jq('#busyWorking');
+    function done(type, key) {
+      busy.hide();
+      button.disabled = false;
+      app.showNotification({ type: type, content: t(key) });
+    }
+    button.disabled = true;
+    busy.show();
+    new Models.Storage().save({ ids: [id] }, {
+      success: function (stored) {
+        new Models.SynchronizePlayer(stored.attributes.value, false).save({}, {
+          success: function () {
+            done('success', 'player.generateplan.info.singleItem');
+          },
+          error: function (model, xhr) {
+            var body = null;
+            try { body = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+            done('error', body && body.code === 'UnableToStartPlanGeneration'
+              ? 'player.generateplan.error.serverBusy'
+              : 'player.generateplan.error.singleItem');
+          }
+        });
+      },
+      error: function () {
+        done('error', 'player.generateplan.error.singleItem');
+      }
+    });
+  }
+
+  function applyGeneratePlan() {
+    var id = playerDetailId();
+    if (!CONFIG.playerGeneratePlan || !id) {
+      removeGeneratePlan();
+      return;
+    }
+    var app = window.App;
+    var Resource = appRequire('support/Resource');
+    if (!app || typeof app.hasPermission !== 'function' || !Resource ||
+        !Resource.PLAYER_SYNC || !app.hasPermission(Resource.PLAYER_SYNC)) return;
+    var jq = window.jQuery;
+    if (!jq || !jq.i18n || typeof jq.i18n.prop !== 'function') return;
+
+    var headers = document.querySelectorAll('.detail > .header');
+    for (var i = 0; i < headers.length; i++) {
+      var header = headers[i];
+      if (!header.parentNode.querySelector('dl.playerProperties')) continue;
+      var actions = header.querySelector(':scope > .actions:not(.' + GENPLAN_CLASS + ')');
+      if (!actions || !actions.querySelector('.saveAndClose')) continue;
+      var mine = header.querySelector(':scope > .' + GENPLAN_CLASS);
+      if (mine && mine.getAttribute('data-player-id') === id) continue;
+      if (mine) header.removeChild(mine);
+
+      var holder = document.createElement('div');
+      holder.className = 'actions ' + GENPLAN_CLASS;
+      holder.setAttribute('data-cm-helper', 'true');
+      holder.setAttribute('data-player-id', id);
+      var button = document.createElement('button');
+      button.className = 'button-primary';
+      button.type = 'button';
+      button.textContent = jq.i18n.prop('actionPanel.button.synchronize');
+      button.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        generatePlan(id, e.currentTarget);
+      });
+      holder.appendChild(button);
+      actions.parentNode.insertBefore(holder, actions.nextSibling);
+      checkLicense(holder);
+      checkPlayer(holder, id);
+    }
+    patchPlayerDetail();
+    if (document.querySelector('.' + GENPLAN_CLASS) &&
+        (!genPlanStyleEl || !genPlanStyleEl.isConnected)) {
+      genPlanStyleEl = makeStyle('cm-helper-genplan-css');
+      genPlanStyleEl.textContent = GENPLAN_CSS;
+    }
+  }
+
+  // The list's own rule, from the row it draws for a player. Disabled is
+  // enabled false. In maintenance is enabled, but with its site disabled, or
+  // with no site and an Omnicast distribution server.
+  function playerCanGeneratePlan(p) {
+    if (!p || !p.enabled) return false;
+    if (p.site !== undefined && p.site !== null) return !!p.site.enabled;
+    return !(p.distributionServer && p.distributionServer.driver === 'OMNICAST');
+  }
+
+  // 11.07 has no license check, and there the license always passes.
+  function checkLicense(holder) {
+    var Models = appRequire('models/model');
+    if (!Models || !Models.HasExceedLicense) {
+      holder.setAttribute('data-license', 'ok');
+      return;
+    }
+    new Models.HasExceedLicense().fetch({
+      success: function (m) {
+        holder.setAttribute('data-license', m.get('value') === 'true' ? 'no' : 'ok');
+      }
+    });
+  }
+
+  function checkPlayer(holder, id) {
+    var Models = appRequire('models/model');
+    if (!Models || !Models.Player) return;
+    new Models.Player({ id: id }).fetch({
+      success: function (m) {
+        holder.setAttribute('data-player', playerCanGeneratePlan(m.attributes) ? 'ok' : 'no');
+      }
+    });
+  }
+
+  // A save can disable the player, or bring it back. The view calls
+  // updatePageHeader with its reloaded model after a save, so the check is
+  // repeated there, from the model the view already has.
+  function patchPlayerDetail() {
+    if (playerDetailPatched) return;
+    var Detail = appRequire('module/player/detail');
+    if (!Detail || !Detail.prototype) return;
+    playerDetailPatched = true;
+    wrapAfter(Detail.prototype, 'updatePageHeader', function () {
+      var holder = this.el && this.el.querySelector(':scope > .header > .' + GENPLAN_CLASS);
+      if (holder && this.model) {
+        holder.setAttribute('data-player', playerCanGeneratePlan(this.model.attributes) ? 'ok' : 'no');
+      }
+    });
+  }
+
   // ------------------------------------------------------------- dark mode
 
   // A real dark theme, not a filter. Applying `filter: invert()` to <html>
@@ -3175,6 +3354,13 @@
       advanced: []
     },
     {
+      title: 'Player Generate Plan',
+      master: 'playerGeneratePlan',
+      blurb: 'Player Properties shows a Generate Plan button when there are no unsaved ' +
+             'changes, so you need not go back to the player list to generate the plan.',
+      advanced: []
+    },
+    {
       title: 'Maintenance Files Fixes',
       master: 'maintenanceFilesFixes',
       blurb: 'Improves the file selection for a maintenance job\'s Install File task. It ' +
@@ -3884,6 +4070,7 @@
     runFeature('bypassUsage', applyBypassUsage);
     runFeature('filePicker', applyFilePicker);
     runFeature('playlistLink', applyPlaylistLink);
+    runFeature('generatePlan', applyGeneratePlan);
     runFeature('userMenu', installUserMenuItem);
     runFeature('welcome', welcomeOnce);
     runFeature('fonts', watchFonts);

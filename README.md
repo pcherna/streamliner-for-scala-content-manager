@@ -54,6 +54,10 @@ Breaks a Used: count into its parts in the list, such as 2 Channels and 1 Messag
 
 The Timeslot Properties dialog links to its playlist again. Content Manager shows the name as plain text to a user who belongs to no workgroup, even when that user can open the playlist.
 
+### Player Generate Plan
+
+Player Properties shows a Generate Plan button when there are no unsaved changes, so you need not go back to the player list to generate the plan.
+
 ### Maintenance Files Fixes
 
 Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
