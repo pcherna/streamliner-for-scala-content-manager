@@ -7,6 +7,7 @@
 .idea/
 *.swp
 *~
+.claude/
 
 # Chrome packs an unpacked extension into these when you use "Pack extension"
 *.crx
