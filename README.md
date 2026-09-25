@@ -89,7 +89,9 @@ JavaScript context to reach jQuery.
 Chrome's prompt says the extension can read and change your data on all sites.
 That is because the match pattern `*://*/ContentManager/*` puts the wildcard in
 the host position, so colleagues do not have to edit anything for their own
-server. The script still only runs on `/ContentManager` paths.
+server. The script still only runs on `/ContentManager` paths. Even there it
+does nothing unless the page loads Content Manager's own files, so other
+software at that path is left alone.
 
 Chrome adds a Streamliner button to its extensions menu. Click it to see the
 version number and a reminder of where the settings are. The button has no

@@ -628,3 +628,33 @@ test('search suggestions: Escape keeps a reply still on its way from opening the
   assert.equal(suggestionKeyDown(ta, 'Escape'), false, 'the plugin still closes the menu');
   assert.equal(suggestionsStale(ta, input), true);
 });
+
+test('not Content Manager: without both files in head, the script does nothing', () => {
+  const cases = [
+    { cm: false },
+    { markers: { profiles: null } },
+    { markers: { version: null } },
+    { markers: { profiles: 'images/profiles/?css=false' } },
+    { markers: { version: 'js/app/version.js' } },
+    { markers: { version: 'js/app/version.js?_=latest' } },
+    { markers: { version: 'other/js/app/version.js.map?_=13.50.02' } }
+  ];
+  for (const opts of cases) {
+    // Dark mode saved on, so a leak would show up as an early dark sheet.
+    const app = load(Object.assign({ storage: { streamlinerConfig: '{"darkMode":true}' } }, opts));
+    const label = JSON.stringify(opts);
+    assert.equal(app.streamliner, undefined, label + ': no window.streamliner');
+    assert.equal(app.window.cmHelper, undefined, label + ': no window.cmHelper');
+    same(app.listeners, [], label + ': no listeners');
+    same(app.timers, [], label + ': no timers');
+    assert.equal(app.document.head.children.length, 0, label + ': no styles');
+    same(app.warnings, [], label + ': no console output');
+  }
+});
+
+test('Content Manager: the files as 11.07 and 12.00 write them are accepted', () => {
+  for (const version of ['js/app/version.js?_=11.07.02', 'js/app/version.js?_=12.00.00']) {
+    const app = load({ markers: { version } });
+    assert.equal(typeof app.streamliner.version, 'string', version);
+  }
+});

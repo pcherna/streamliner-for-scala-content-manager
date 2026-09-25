@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Streamliner for Scala Content Manager
 // @namespace    https://github.com/pcherna/streamliner-for-scala-content-manager
-// @version      1.44.0
+// @version      1.45.0
 // @description  Conveniences and fixes for Scala Content Manager: dark mode, speedup, text-only menus, search hotkey, host badge, login fix.
 // @match        *://*/ContentManager/*
 // @match        *://*/ContentManager
@@ -192,7 +192,7 @@
     } catch (e) { /* private mode */ }
   }
 
-  var VERSION = '1.44.0';
+  var VERSION = '1.45.0';
   var TAG = '[streamliner]';
   var POLL_MS = 250;
   var STYLE_ID = 'cm-helper-speed';
@@ -4124,355 +4124,409 @@
     }).observe(root, { childList: true, subtree: true });
   }
 
-  loadConfig();
+  // The match pattern names only the path, and other software can live at
+  // /ContentManager too. So nothing happens until the page shows two of the
+  // app's own files: the profile stylesheet and version.js with its version
+  // cache-buster. Every tested version has both in <head>, as static HTML.
+  // The link comes before jquery.js and version.js after it. A jQuery that is
+  // already there is patched on the spot, and <head> is still being parsed,
+  // so the early dark sheet still beats the first paint. A page without both
+  // gets nothing at all: no listeners, no styles, no console line.
+  var PROFILES_CSS = /(^|\/)images\/profiles\/\?css=true$/;
+  var VERSION_JS = /(^|\/)js\/app\/version\.js\?_=\d+\.\d+\.\d+$/;
 
-  if (CONFIG.scaleJquery) installJqueryPatch();
-  if (CONFIG.scaleWebAnimations) patchWebAnimations();
-  if (CONFIG.scaleTimeouts) patchTimeouts();
-
-  // Always listening, and gated inside. Installing these from the config would
-  // mean the switch only took effect after a reload.
-  document.addEventListener('input', onValueEvent, true);
-  document.addEventListener('change', onValueEvent, true);
-  document.addEventListener('keydown', onKeyDown, true);
-  // On window, in capture, so it runs before the app's handler on document.
-  window.addEventListener('keyup', onSignInEnter, true);
-  window.addEventListener('keydown', onSuggestionKeyDown, true);
-  window.addEventListener('keyup', onSuggestionKey, true);
-
-  darkOn = !!CONFIG.darkMode;
-
-  // The full dark sheet needs the app's stylesheets, which have not been
-  // parsed at document-start. The base rules alone are enough to keep the
-  // first paint dark instead of flashing white until DOMContentLoaded.
-  if (darkOn && (document.head || document.documentElement)) {
-    darkEl = makeStyle(DARK_ID);
-    darkEl.textContent = darkBaseTop();
+  function hasMarker(selector, attr, pattern) {
+    var found = document.querySelectorAll(selector);
+    for (var i = 0; i < found.length; i++) {
+      if (pattern.test(found[i].getAttribute(attr) || '')) return true;
+    }
+    return false;
   }
 
-  function start() {
-    if (darkOn) setDark(true, false);
-    sweep();
+  function isContentManager() {
+    return hasMarker('link[href*="images/profiles/"]', 'href', PROFILES_CSS) &&
+      hasMarker('script[src*="js/app/version.js"]', 'src', VERSION_JS);
   }
 
-  observe();
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    // The script is meant to run at document-start, but a userscript manager can
-    // be late and the extension can be installed into a page that is already
-    // open. Waiting for an event that has been and gone left dark mode off.
-    start();
-  }
-  window.addEventListener('load', sweep);
-  // The @import'ed sheet is not always parsed by DOMContentLoaded.
-  [300, 1000, 3000].forEach(function (ms) {
-    nativeSetTimeout(sweep, ms);
-  });
+  function boot() {
+    loadConfig();
 
-  // Diagnostics. In the page console: copy(streamliner.dumpMenus())
-  window.streamliner = window.cmHelper = {
-    version: VERSION,
-    config: CONFIG,
-    openSettings: openSettings,
-    save: saveConfig,
-    // Re-applies everything that does not need a reload. The settings panel
-    // calls this on save; it is exposed for changing config from the console.
-    refresh: applyAll,
-    setDark: setDark,
-    isDark: function () { return darkOn; },
-    // The pure helpers, reachable from test/ without a browser. Not an API:
-    // anything here can change between versions.
-    _internals: {
-      scale: scale,
-      scaleTimeList: scaleTimeList,
-      sameShape: sameShape,
-      cssValue: cssValue,
-      parseHotkey: parseHotkey,
-      matchesHotkey: matchesHotkey,
-      hotkeyLabel: hotkeyLabel,
-      normalizeLabel: normalizeLabel,
-      textToOverrides: textToOverrides,
-      overridesToText: overridesToText,
-      parseRgb: parseRgb,
-      hexToRgb: hexToRgb,
-      hslToRgb: hslToRgb,
-      recolour: recolour,
-      recolourGradient: recolourGradient,
-      recolourColourList: recolourColourList,
-      applySectionLinks: applySectionLinks,
-      onSignInEnter: onSignInEnter,
-      suggestionsStale: suggestionsStale,
-      settleOnSelectKey: settleOnSelectKey,
-      suggestionKeyDown: suggestionKeyDown,
-      highlightFirst: highlightFirst,
-      applyPlaylistLink: applyPlaylistLink,
-      absoluteUrls: absoluteUrls,
-      darkDeclarations: darkDeclarations,
-      keepLastCopies: keepLastCopies,
-      outsideNativeDark: outsideNativeDark,
-      DARK_LOGO_SELECTOR: DARK_LOGO_SELECTOR,
-      colourFromValue: colourFromValue,
-      byName: byName,
-      usageClauses: usageClauses,
-      usageCountPath: usageCountPath,
-      bypassPath: bypassPath,
-      bypassKey: bypassKey,
-      USAGE_KINDS: USAGE_KINDS,
-      onTemplateList: onTemplateList,
-      usageKind: usageKind,
-      syncHostTitle: syncHostTitle,
-      runFeature: runFeature,
-      sweep: sweep
-    },
-    // In the page console on a screen that still looks wrong:
-    //   copy(streamliner.auditDark())
-    auditDark: function () {
-      var out = ['streamliner ' + VERSION + ' dark audit on ' + location.host + location.hash];
-      out.push('dark on: ' + darkOn + ', override sheet: ' +
-               (darkEl ? darkEl.textContent.length + ' chars, disabled=' + darkEl.disabled : 'none'));
-      out.push('stylesheets: ' + document.styleSheets.length + ', built at ' + darkBuiltAt);
+    if (CONFIG.scaleJquery) installJqueryPatch();
+    if (CONFIG.scaleWebAnimations) patchWebAnimations();
+    if (CONFIG.scaleTimeouts) patchTimeouts();
 
-      function toRgb(v) {
-        var m = /rgba?\(([^)]+)\)/.exec(v || '');
-        if (!m) return null;
-        var p = m[1].split(/[\s,\/]+/).map(parseFloat);
-        return [p[0], p[1], p[2], p[3] === undefined ? 1 : p[3]];
-      }
-      function lum(c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; }
-      function describe(el) {
-        var bits = el.tagName.toLowerCase();
-        if (el.id) bits += '#' + el.id;
-        if (el.className && typeof el.className === 'string') {
-          bits += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+    // Always listening, and gated inside. Installing these from the config would
+    // mean the switch only took effect after a reload.
+    document.addEventListener('input', onValueEvent, true);
+    document.addEventListener('change', onValueEvent, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    // On window, in capture, so it runs before the app's handler on document.
+    window.addEventListener('keyup', onSignInEnter, true);
+    window.addEventListener('keydown', onSuggestionKeyDown, true);
+    window.addEventListener('keyup', onSuggestionKey, true);
+
+    darkOn = !!CONFIG.darkMode;
+
+    // The full dark sheet needs the app's stylesheets, which have not been
+    // parsed at document-start. The base rules alone are enough to keep the
+    // first paint dark instead of flashing white until DOMContentLoaded.
+    if (darkOn && (document.head || document.documentElement)) {
+      darkEl = makeStyle(DARK_ID);
+      darkEl.textContent = darkBaseTop();
+    }
+
+    function start() {
+      if (darkOn) setDark(true, false);
+      sweep();
+    }
+
+    observe();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', start);
+    } else {
+      // The script is meant to run at document-start, but a userscript manager can
+      // be late and the extension can be installed into a page that is already
+      // open. Waiting for an event that has been and gone left dark mode off.
+      start();
+    }
+    window.addEventListener('load', sweep);
+    // The @import'ed sheet is not always parsed by DOMContentLoaded.
+    [300, 1000, 3000].forEach(function (ms) {
+      nativeSetTimeout(sweep, ms);
+    });
+
+    // Diagnostics. In the page console: copy(streamliner.dumpMenus())
+    window.streamliner = window.cmHelper = {
+      version: VERSION,
+      config: CONFIG,
+      openSettings: openSettings,
+      save: saveConfig,
+      // Re-applies everything that does not need a reload. The settings panel
+      // calls this on save; it is exposed for changing config from the console.
+      refresh: applyAll,
+      setDark: setDark,
+      isDark: function () { return darkOn; },
+      // The pure helpers, reachable from test/ without a browser. Not an API:
+      // anything here can change between versions.
+      _internals: {
+        scale: scale,
+        scaleTimeList: scaleTimeList,
+        sameShape: sameShape,
+        cssValue: cssValue,
+        parseHotkey: parseHotkey,
+        matchesHotkey: matchesHotkey,
+        hotkeyLabel: hotkeyLabel,
+        normalizeLabel: normalizeLabel,
+        textToOverrides: textToOverrides,
+        overridesToText: overridesToText,
+        parseRgb: parseRgb,
+        hexToRgb: hexToRgb,
+        hslToRgb: hslToRgb,
+        recolour: recolour,
+        recolourGradient: recolourGradient,
+        recolourColourList: recolourColourList,
+        applySectionLinks: applySectionLinks,
+        onSignInEnter: onSignInEnter,
+        suggestionsStale: suggestionsStale,
+        settleOnSelectKey: settleOnSelectKey,
+        suggestionKeyDown: suggestionKeyDown,
+        highlightFirst: highlightFirst,
+        applyPlaylistLink: applyPlaylistLink,
+        absoluteUrls: absoluteUrls,
+        darkDeclarations: darkDeclarations,
+        keepLastCopies: keepLastCopies,
+        outsideNativeDark: outsideNativeDark,
+        DARK_LOGO_SELECTOR: DARK_LOGO_SELECTOR,
+        colourFromValue: colourFromValue,
+        byName: byName,
+        usageClauses: usageClauses,
+        usageCountPath: usageCountPath,
+        bypassPath: bypassPath,
+        bypassKey: bypassKey,
+        USAGE_KINDS: USAGE_KINDS,
+        onTemplateList: onTemplateList,
+        usageKind: usageKind,
+        syncHostTitle: syncHostTitle,
+        runFeature: runFeature,
+        sweep: sweep
+      },
+      // In the page console on a screen that still looks wrong:
+      //   copy(streamliner.auditDark())
+      auditDark: function () {
+        var out = ['streamliner ' + VERSION + ' dark audit on ' + location.host + location.hash];
+        out.push('dark on: ' + darkOn + ', override sheet: ' +
+                 (darkEl ? darkEl.textContent.length + ' chars, disabled=' + darkEl.disabled : 'none'));
+        out.push('stylesheets: ' + document.styleSheets.length + ', built at ' + darkBuiltAt);
+
+        function toRgb(v) {
+          var m = /rgba?\(([^)]+)\)/.exec(v || '');
+          if (!m) return null;
+          var p = m[1].split(/[\s,\/]+/).map(parseFloat);
+          return [p[0], p[1], p[2], p[3] === undefined ? 1 : p[3]];
         }
-        return bits;
-      }
+        function lum(c) { return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255; }
+        function describe(el) {
+          var bits = el.tagName.toLowerCase();
+          if (el.id) bits += '#' + el.id;
+          if (el.className && typeof el.className === 'string') {
+            bits += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+          }
+          return bits;
+        }
 
-      var surfaces = [], texts = [], images = [];
-      var all = document.querySelectorAll('body *');
-      for (var i = 0; i < all.length; i++) {
-        var el = all[i];
-        if (el.closest('[data-cm-helper]')) continue;
-        var cs = window.getComputedStyle(el);
-        var box = el.getBoundingClientRect();
+        var surfaces = [], texts = [], images = [];
+        var all = document.querySelectorAll('body *');
+        for (var i = 0; i < all.length; i++) {
+          var el = all[i];
+          if (el.closest('[data-cm-helper]')) continue;
+          var cs = window.getComputedStyle(el);
+          var box = el.getBoundingClientRect();
 
-        var bg = toRgb(cs.backgroundColor);
-        if (box.width * box.height > 1500 && bg && bg[3] > 0.5 && lum(bg) > 0.45) {
-          surfaces.push({
-            area: Math.round(box.width * box.height),
-            what: describe(el),
-            bg: cs.backgroundColor,
-            inline: /background/.test(el.getAttribute('style') || '') ? ' INLINE' : '',
-            image: cs.backgroundImage && cs.backgroundImage !== 'none' ? ' +bg-image' : ''
+          var bg = toRgb(cs.backgroundColor);
+          if (box.width * box.height > 1500 && bg && bg[3] > 0.5 && lum(bg) > 0.45) {
+            surfaces.push({
+              area: Math.round(box.width * box.height),
+              what: describe(el),
+              bg: cs.backgroundColor,
+              inline: /background/.test(el.getAttribute('style') || '') ? ' INLINE' : '',
+              image: cs.backgroundImage && cs.backgroundImage !== 'none' ? ' +bg-image' : ''
+            });
+          }
+          if (!el.children.length && el.textContent && el.textContent.trim() && box.width > 12) {
+            var fc = toRgb(cs.color);
+            if (fc && lum(fc) < 0.42) {
+              texts.push({ what: describe(el), col: cs.color,
+                inline: /(^|;)\s*color\s*:/.test(el.getAttribute('style') || '') ? ' INLINE' : '' });
+            }
+          }
+          if (cs.backgroundImage && cs.backgroundImage.indexOf('url(') !== -1 &&
+              box.width * box.height > 200 && images.length < 12) {
+            images.push(describe(el) + '  ' +
+              (cs.backgroundImage.match(/url\(["\']?([^"\')]+)/) || [, ''])[1].split('/').pop().slice(0, 40));
+          }
+        }
+        surfaces.sort(function (a, b) { return b.area - a.area; });
+
+        out.push('--- surfaces still light: ' + surfaces.length + ' ---');
+        surfaces.slice(0, 15).forEach(function (o) {
+          out.push('  ' + o.what + '  area=' + o.area + '  bg=' + o.bg + o.inline + o.image);
+        });
+        out.push('--- dark text remaining: ' + texts.length + ' ---');
+        texts.slice(0, 15).forEach(function (o) { out.push('  ' + o.what + '  color=' + o.col + o.inline); });
+        out.push('--- background images on screen: ' + images.length + ' ---');
+        images.forEach(function (x) { out.push('  ' + x); });
+
+        // A threshold only says pass or fail. Printing the real palette shows
+        // what the page is actually painted with, which is the useful thing when
+        // the two disagree.
+        var biggest = [];
+        for (var b = 0; b < all.length; b++) {
+          var e2 = all[b];
+          if (e2.closest('[data-cm-helper]')) continue;
+          var r2 = e2.getBoundingClientRect();
+          if (r2.width * r2.height < 4000) continue;
+          var c2 = window.getComputedStyle(e2);
+          var bg2 = toRgb(c2.backgroundColor);
+          biggest.push({
+            area: Math.round(r2.width * r2.height),
+            what: describe(e2),
+            bg: bg2 && bg2[3] > 0.02 ? c2.backgroundColor + ' L=' + lum(bg2).toFixed(2) : 'transparent',
+            fg: c2.color
           });
         }
-        if (!el.children.length && el.textContent && el.textContent.trim() && box.width > 12) {
-          var fc = toRgb(cs.color);
-          if (fc && lum(fc) < 0.42) {
-            texts.push({ what: describe(el), col: cs.color,
-              inline: /(^|;)\s*color\s*:/.test(el.getAttribute('style') || '') ? ' INLINE' : '' });
+        biggest.sort(function (a, b2) { return b2.area - a.area; });
+        out.push('--- largest elements and what they are painted ---');
+        biggest.slice(0, 14).forEach(function (o) {
+          out.push('  ' + o.what + '  area=' + o.area + '  bg=' + o.bg + '  fg=' + o.fg);
+        });
+
+        // Pseudo-elements and shadows are painted without an element of their
+        // own, so the scan above cannot see them.
+        var pseudo = 0, shadows = 0;
+        for (var q = 0; q < all.length && q < 4000; q++) {
+          var e3 = all[q];
+          if (e3.closest('[data-cm-helper]')) continue;
+          ['::before', '::after'].forEach(function (which) {
+            var pc = window.getComputedStyle(e3, which);
+            if (!pc || pc.content === 'none') return;
+            var pbg = toRgb(pc.backgroundColor);
+            if (pbg && pbg[3] > 0.5 && lum(pbg) > 0.45) {
+              pseudo++;
+              if (pseudo <= 6) out.push('  LIGHT ' + which + ' on ' + describe(e3) + ' bg=' + pc.backgroundColor);
+            }
+          });
+          var sh = window.getComputedStyle(e3).boxShadow;
+          if (sh && sh !== 'none') {
+            var scol = toRgb(sh);
+            if (scol && lum(scol) > 0.5) shadows++;
           }
         }
-        if (cs.backgroundImage && cs.backgroundImage.indexOf('url(') !== -1 &&
-            box.width * box.height > 200 && images.length < 12) {
-          images.push(describe(el) + '  ' +
-            (cs.backgroundImage.match(/url\(["\']?([^"\')]+)/) || [, ''])[1].split('/').pop().slice(0, 40));
-        }
-      }
-      surfaces.sort(function (a, b) { return b.area - a.area; });
+        out.push('--- light pseudo-element backgrounds: ' + pseudo + ' ---');
+        out.push('--- light box-shadows: ' + shadows + ' ---');
 
-      out.push('--- surfaces still light: ' + surfaces.length + ' ---');
-      surfaces.slice(0, 15).forEach(function (o) {
-        out.push('  ' + o.what + '  area=' + o.area + '  bg=' + o.bg + o.inline + o.image);
-      });
-      out.push('--- dark text remaining: ' + texts.length + ' ---');
-      texts.slice(0, 15).forEach(function (o) { out.push('  ' + o.what + '  color=' + o.col + o.inline); });
-      out.push('--- background images on screen: ' + images.length + ' ---');
-      images.forEach(function (x) { out.push('  ' + x); });
-
-      // A threshold only says pass or fail. Printing the real palette shows
-      // what the page is actually painted with, which is the useful thing when
-      // the two disagree.
-      var biggest = [];
-      for (var b = 0; b < all.length; b++) {
-        var e2 = all[b];
-        if (e2.closest('[data-cm-helper]')) continue;
-        var r2 = e2.getBoundingClientRect();
-        if (r2.width * r2.height < 4000) continue;
-        var c2 = window.getComputedStyle(e2);
-        var bg2 = toRgb(c2.backgroundColor);
-        biggest.push({
-          area: Math.round(r2.width * r2.height),
-          what: describe(e2),
-          bg: bg2 && bg2[3] > 0.02 ? c2.backgroundColor + ' L=' + lum(bg2).toFixed(2) : 'transparent',
-          fg: c2.color
-        });
-      }
-      biggest.sort(function (a, b2) { return b2.area - a.area; });
-      out.push('--- largest elements and what they are painted ---');
-      biggest.slice(0, 14).forEach(function (o) {
-        out.push('  ' + o.what + '  area=' + o.area + '  bg=' + o.bg + '  fg=' + o.fg);
-      });
-
-      // Pseudo-elements and shadows are painted without an element of their
-      // own, so the scan above cannot see them.
-      var pseudo = 0, shadows = 0;
-      for (var q = 0; q < all.length && q < 4000; q++) {
-        var e3 = all[q];
-        if (e3.closest('[data-cm-helper]')) continue;
-        ['::before', '::after'].forEach(function (which) {
-          var pc = window.getComputedStyle(e3, which);
-          if (!pc || pc.content === 'none') return;
-          var pbg = toRgb(pc.backgroundColor);
-          if (pbg && pbg[3] > 0.5 && lum(pbg) > 0.45) {
-            pseudo++;
-            if (pseudo <= 6) out.push('  LIGHT ' + which + ' on ' + describe(e3) + ' bg=' + pc.backgroundColor);
+        // A gradient reports background-color 'transparent', so the scan above
+        // calls it dark. This is what hid the white panels twice.
+        var lightGradients = [];
+        for (var g = 0; g < all.length; g++) {
+          var eg = all[g];
+          if (eg.closest('[data-cm-helper]')) continue;
+          var rg2 = eg.getBoundingClientRect();
+          if (rg2.width * rg2.height < 1500) continue;
+          var bi = window.getComputedStyle(eg).backgroundImage;
+          if (!bi || !/gradient/i.test(bi)) continue;
+          var stops = (bi.match(/rgba?\([^)]*\)/g) || []).map(function (t) {
+            var c = toRgb(t);
+            return c ? lum(c) : 0;
+          });
+          if (stops.length && Math.max.apply(null, stops) > 0.45) {
+            lightGradients.push(describe(eg) + '  area=' + Math.round(rg2.width * rg2.height) +
+              '  ' + bi.slice(0, 70));
           }
-        });
-        var sh = window.getComputedStyle(e3).boxShadow;
-        if (sh && sh !== 'none') {
-          var scol = toRgb(sh);
-          if (scol && lum(scol) > 0.5) shadows++;
         }
-      }
-      out.push('--- light pseudo-element backgrounds: ' + pseudo + ' ---');
-      out.push('--- light box-shadows: ' + shadows + ' ---');
+        out.push('--- gradients still holding a light stop: ' + lightGradients.length + ' ---');
+        lightGradients.slice(0, 10).forEach(function (x) { out.push('  ' + x); });
 
-      // A gradient reports background-color 'transparent', so the scan above
-      // calls it dark. This is what hid the white panels twice.
-      var lightGradients = [];
-      for (var g = 0; g < all.length; g++) {
-        var eg = all[g];
-        if (eg.closest('[data-cm-helper]')) continue;
-        var rg2 = eg.getBoundingClientRect();
-        if (rg2.width * rg2.height < 1500) continue;
-        var bi = window.getComputedStyle(eg).backgroundImage;
-        if (!bi || !/gradient/i.test(bi)) continue;
-        var stops = (bi.match(/rgba?\([^)]*\)/g) || []).map(function (t) {
-          var c = toRgb(t);
-          return c ? lum(c) : 0;
-        });
-        if (stops.length && Math.max.apply(null, stops) > 0.45) {
-          lightGradients.push(describe(eg) + '  area=' + Math.round(rg2.width * rg2.height) +
-            '  ' + bi.slice(0, 70));
-        }
-      }
-      out.push('--- gradients still holding a light stop: ' + lightGradients.length + ' ---');
-      lightGradients.slice(0, 10).forEach(function (x) { out.push('  ' + x); });
-
-      // Content images are deliberately never recoloured. On a media list full
-      // of white artwork that alone can read as "lots of white", so say how
-      // much of the screen they cover rather than leaving it a mystery.
-      var lightImages = 0, lightImageArea = 0, sampled = 0;
-      var canvas = null, ctx = null;
-      try {
-        canvas = document.createElement('canvas');
-        canvas.width = canvas.height = 1;
-        ctx = canvas.getContext('2d');
-      } catch (e) { ctx = null; }
-      var pics = document.querySelectorAll('img');
-      for (var q2 = 0; q2 < pics.length && ctx; q2++) {
-        var pic = pics[q2];
-        if (pic.closest('[data-cm-helper]')) continue;
-        var pr = pic.getBoundingClientRect();
-        if (pr.width * pr.height < 400 || !pic.complete || !pic.naturalWidth) continue;
+        // Content images are deliberately never recoloured. On a media list full
+        // of white artwork that alone can read as "lots of white", so say how
+        // much of the screen they cover rather than leaving it a mystery.
+        var lightImages = 0, lightImageArea = 0, sampled = 0;
+        var canvas = null, ctx = null;
         try {
-          ctx.clearRect(0, 0, 1, 1);
-          ctx.drawImage(pic, 0, 0, 1, 1);
-          var px = ctx.getImageData(0, 0, 1, 1).data;
-          sampled++;
-          if ((0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / 255 > 0.6) {
-            lightImages++;
-            lightImageArea += pr.width * pr.height;
-          }
-        } catch (e) { /* cross-origin, cannot sample */ }
-      }
-      out.push('--- content images: ' + sampled + ' sampled, ' + lightImages +
-               ' are light, covering ' + Math.round(lightImageArea) + 'px2 ---');
-      return out.join('\n');
-    },
-
-    // Arms a one-shot click. Click the part that looks wrong and it reports
-    // exactly what paints there, all the way up the tree. Use this when the
-    // audit says everything is fine but the screen disagrees.
-    //   streamliner.probe()
-    probe: function () {
-      function tidy(v) {
-        return String(v || '').replace(/url\([^)]*\)/g, 'url(IMG)').slice(0, 70);
-      }
-      function name(el) {
-        if (el === document.documentElement) return 'html';
-        if (el === document.body) return 'body';
-        var bits = el.tagName.toLowerCase();
-        if (el.id) bits += '#' + el.id;
-        if (el.className && typeof el.className === 'string') {
-          bits += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+          canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 1;
+          ctx = canvas.getContext('2d');
+        } catch (e) { ctx = null; }
+        var pics = document.querySelectorAll('img');
+        for (var q2 = 0; q2 < pics.length && ctx; q2++) {
+          var pic = pics[q2];
+          if (pic.closest('[data-cm-helper]')) continue;
+          var pr = pic.getBoundingClientRect();
+          if (pr.width * pr.height < 400 || !pic.complete || !pic.naturalWidth) continue;
+          try {
+            ctx.clearRect(0, 0, 1, 1);
+            ctx.drawImage(pic, 0, 0, 1, 1);
+            var px = ctx.getImageData(0, 0, 1, 1).data;
+            sampled++;
+            if ((0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2]) / 255 > 0.6) {
+              lightImages++;
+              lightImageArea += pr.width * pr.height;
+            }
+          } catch (e) { /* cross-origin, cannot sample */ }
         }
-        return bits;
-      }
-      function onClick(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        document.removeEventListener('click', onClick, true);
+        out.push('--- content images: ' + sampled + ' sampled, ' + lightImages +
+                 ' are light, covering ' + Math.round(lightImageArea) + 'px2 ---');
+        return out.join('\n');
+      },
 
-        var lines = ['streamliner ' + VERSION + ' probe at ' +
-                     Math.round(e.clientX) + ',' + Math.round(e.clientY) +
-                     ' on ' + window.location.host + window.location.hash];
-        var el = document.elementFromPoint(e.clientX, e.clientY);
-        for (var i = 0; i < 9 && el; i++, el = el.parentElement) {
-          var cs = window.getComputedStyle(el);
-          var bits = name(el) + '  bg=' + cs.backgroundColor;
-          if (cs.backgroundImage && cs.backgroundImage !== 'none') {
-            bits += '  img=' + tidy(cs.backgroundImage);
-          }
-          if (cs.boxShadow && cs.boxShadow !== 'none') bits += '  shadow=' + tidy(cs.boxShadow);
-          if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) {
-            bits += '  outline=' + cs.outlineWidth + ' ' + cs.outlineColor;
-          }
-          if (parseFloat(cs.borderTopWidth) > 0) bits += '  bTop=' + cs.borderTopColor;
-          if (parseFloat(cs.borderLeftWidth) > 0) bits += '  bLeft=' + cs.borderLeftColor;
-          if (cs.opacity !== '1') bits += '  opacity=' + cs.opacity;
-          if (cs.filter && cs.filter !== 'none') bits += '  filter=' + tidy(cs.filter);
-          lines.push('  ' + bits);
+      // Arms a one-shot click. Click the part that looks wrong and it reports
+      // exactly what paints there, all the way up the tree. Use this when the
+      // audit says everything is fine but the screen disagrees.
+      //   streamliner.probe()
+      probe: function () {
+        function tidy(v) {
+          return String(v || '').replace(/url\([^)]*\)/g, 'url(IMG)').slice(0, 70);
         }
-        var text = lines.join('\n');
-        console.log(text);
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
-        } catch (err) { /* clipboard needs focus */ }
-      }
-      document.addEventListener('click', onClick, true);
-      return 'Click the part that looks wrong. That click is swallowed, and the ' +
-             'report goes to the console and, if the page has focus, the clipboard.';
-    },
+        function name(el) {
+          if (el === document.documentElement) return 'html';
+          if (el === document.body) return 'body';
+          var bits = el.tagName.toLowerCase();
+          if (el.id) bits += '#' + el.id;
+          if (el.className && typeof el.className === 'string') {
+            bits += '.' + el.className.trim().split(/\s+/).slice(0, 3).join('.');
+          }
+          return bits;
+        }
+        function onClick(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          document.removeEventListener('click', onClick, true);
 
-    dumpMenus: function () {
-      var out = [];
-      var roots = document.querySelectorAll(
-        '.leftPinnedMenu, .rightPinnedMenu, .navbar-sidebar-menu, [class*="PinnedMenu"]');
-      out.push('streamliner ' + VERSION + ' on ' + location.host + location.pathname);
-      out.push('menu roots found: ' + roots.length);
-      for (var i = 0; i < roots.length && i < 4; i++) {
-        var r = roots[i];
-        out.push('--- root ' + i + ': ' + r.className + ' (' +
-                 Math.round(r.getBoundingClientRect().width) + 'px wide) ---');
-        out.push(r.outerHTML.slice(0, 4000));
+          var lines = ['streamliner ' + VERSION + ' probe at ' +
+                       Math.round(e.clientX) + ',' + Math.round(e.clientY) +
+                       ' on ' + window.location.host + window.location.hash];
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          for (var i = 0; i < 9 && el; i++, el = el.parentElement) {
+            var cs = window.getComputedStyle(el);
+            var bits = name(el) + '  bg=' + cs.backgroundColor;
+            if (cs.backgroundImage && cs.backgroundImage !== 'none') {
+              bits += '  img=' + tidy(cs.backgroundImage);
+            }
+            if (cs.boxShadow && cs.boxShadow !== 'none') bits += '  shadow=' + tidy(cs.boxShadow);
+            if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) {
+              bits += '  outline=' + cs.outlineWidth + ' ' + cs.outlineColor;
+            }
+            if (parseFloat(cs.borderTopWidth) > 0) bits += '  bTop=' + cs.borderTopColor;
+            if (parseFloat(cs.borderLeftWidth) > 0) bits += '  bLeft=' + cs.borderLeftColor;
+            if (cs.opacity !== '1') bits += '  opacity=' + cs.opacity;
+            if (cs.filter && cs.filter !== 'none') bits += '  filter=' + tidy(cs.filter);
+            lines.push('  ' + bits);
+          }
+          var text = lines.join('\n');
+          console.log(text);
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+          } catch (err) { /* clipboard needs focus */ }
+        }
+        document.addEventListener('click', onClick, true);
+        return 'Click the part that looks wrong. That click is swallowed, and the ' +
+               'report goes to the console and, if the page has focus, the clipboard.';
+      },
+
+      dumpMenus: function () {
+        var out = [];
+        var roots = document.querySelectorAll(
+          '.leftPinnedMenu, .rightPinnedMenu, .navbar-sidebar-menu, [class*="PinnedMenu"]');
+        out.push('streamliner ' + VERSION + ' on ' + location.host + location.pathname);
+        out.push('menu roots found: ' + roots.length);
+        for (var i = 0; i < roots.length && i < 4; i++) {
+          var r = roots[i];
+          out.push('--- root ' + i + ': ' + r.className + ' (' +
+                   Math.round(r.getBoundingClientRect().width) + 'px wide) ---');
+          out.push(r.outerHTML.slice(0, 4000));
+        }
+        var items = document.querySelectorAll(PINNED_ITEM);
+        out.push('--- ' + items.length + ' menu items matched by "' + PINNED_ITEM + '" ---');
+        for (var k = 0; k < items.length && k < 12; k++) {
+          var a = items[k];
+          var lbl = a.querySelector('.nav-label, .cm-helper-label, span');
+          out.push(k + ': href=' + a.getAttribute('href') +
+                   ' title=' + JSON.stringify(a.getAttribute('title')) +
+                   ' aria=' + JSON.stringify(a.getAttribute('aria-label')) +
+                   ' labelled=' + a.classList.contains('cm-helper-has-label') +
+                   ' text=' + JSON.stringify(lbl ? lbl.textContent.trim() : null));
+        }
+        return out.join('\n');
       }
-      var items = document.querySelectorAll(PINNED_ITEM);
-      out.push('--- ' + items.length + ' menu items matched by "' + PINNED_ITEM + '" ---');
-      for (var k = 0; k < items.length && k < 12; k++) {
-        var a = items[k];
-        var lbl = a.querySelector('.nav-label, .cm-helper-label, span');
-        out.push(k + ': href=' + a.getAttribute('href') +
-                 ' title=' + JSON.stringify(a.getAttribute('title')) +
-                 ' aria=' + JSON.stringify(a.getAttribute('aria-label')) +
-                 ' labelled=' + a.classList.contains('cm-helper-has-label') +
-                 ' text=' + JSON.stringify(lbl ? lbl.textContent.trim() : null));
-      }
-      return out.join('\n');
+    };
+
+    log('loaded, speedFactor ' + CONFIG.speedFactor);
+  }
+
+  // Checked at once, for a page that was already open, then on every batch
+  // of parsed nodes. The markers are static HTML, so if DOMContentLoaded
+  // comes without them, they are not coming.
+  function gate() {
+    var booted = false;
+    var watcher = null;
+    function tryBoot() {
+      if (booted || !isContentManager()) return false;
+      booted = true;
+      stopWatching();
+      boot();
+      return true;
     }
-  };
+    function stopWatching() {
+      if (watcher) watcher.disconnect();
+      document.removeEventListener('DOMContentLoaded', lastChance);
+    }
+    function lastChance() {
+      if (!tryBoot()) stopWatching();
+    }
+    if (tryBoot() || document.readyState !== 'loading') return;
+    watcher = new MutationObserver(tryBoot);
+    watcher.observe(document, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', lastChance);
+  }
 
-  log('loaded, speedFactor ' + CONFIG.speedFactor);
+  gate();
 })();

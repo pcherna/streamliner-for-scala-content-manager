@@ -3,8 +3,11 @@
 // Loads streamliner.user.js into a bare stand-in for a browser window, so the
 // pure helpers and the startup path can be exercised from Node with nothing
 // installed. The stand-in answers every DOM query with "nothing there": no
-// rows, no sheets, no sign-in form. Anything that needs real layout or real
-// stylesheets stays a live test in Chrome.
+// rows, no sheets, no sign-in form. The one exception is the pair of files in
+// <head> that prove the page is Content Manager: without them the script does
+// nothing at all. Pass markers: { profiles, version } to change their
+// attributes (null leaves one out), or cm: false to leave both out. Anything
+// that needs real layout or real stylesheets stays a live test in Chrome.
 
 const fs = require('fs');
 const path = require('path');
@@ -58,6 +61,17 @@ function load(opts) {
   const timers = [];
   const warnings = [];
 
+  const markers = Object.assign(
+    { profiles: 'images/profiles/?css=true', version: 'js/app/version.js?_=13.50.02' },
+    opts.markers || {});
+  function marker(tag, attr, value) {
+    if (opts.cm === false || value === null) return [];
+    const el = element(tag);
+    el.setAttribute(attr, value);
+    return [el];
+  }
+  const listeners = [];
+
   const documentElement = element('html');
   const head = element('head');
   const body = element('body');
@@ -75,8 +89,12 @@ function load(opts) {
     createElement: element,
     createTextNode(text) { return { nodeType: 3, textContent: text }; },
     querySelector() { return null; },
-    querySelectorAll() { return []; },
-    addEventListener() {},
+    querySelectorAll(selector) {
+      if (/^link\[href\*="images\/profiles\//.test(selector)) return marker('link', 'href', markers.profiles);
+      if (/^script\[src\*="js\/app\/version\.js/.test(selector)) return marker('script', 'src', markers.version);
+      return [];
+    },
+    addEventListener(type) { listeners.push('document ' + type); },
     removeEventListener() {}
   };
 
@@ -102,7 +120,7 @@ function load(opts) {
     clearTimeout() {},
     setInterval() { return 1; },
     clearInterval() {},
-    addEventListener() {},
+    addEventListener(type) { listeners.push('window ' + type); },
     removeEventListener() {},
     MutationObserver: class { observe() {} disconnect() {} },
     // A web API, not a JS builtin, so a vm context does not get it for free.
@@ -126,8 +144,9 @@ function load(opts) {
     store,
     timers,
     warnings,
+    listeners,
     streamliner: window.streamliner,
-    internals: window.streamliner._internals
+    internals: window.streamliner && window.streamliner._internals
   };
 }
 
