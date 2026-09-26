@@ -110,6 +110,11 @@
     // labels the tab "(1)" the way its neighbours show their counts.
     nonScheduledContent: true,
 
+    // The schedule page picks a frame from a small map, where frames can
+    // overlap, or by name through a dialog. This lists the frames by name
+    // under the map, each one a click away, in place of the dialog's link.
+    frameList: true,
+
     // Player Properties offers Generate Plan while there is nothing to save,
     // so the plan can be made without going back to the player list.
     playerGeneratePlan: true,
@@ -2610,6 +2615,130 @@
     if (tab.textContent !== wanted) tab.textContent = wanted;
   }
 
+  // ------------------------------------------------------ schedule frames
+
+  // The schedule page's left column shows the current frame and a small map
+  // of the frameset. A frame hidden behind another on the map can only be
+  // reached through "Select a different frame", a dialog that lists them by
+  // name. This lists them by name under the map instead, and hides the
+  // dialog's link.
+  //
+  // Each map rectangle carries its frame's id, and a click on it runs the
+  // page's triggerFrameChange: the unsaved-changes warning, the remembered
+  // frame, the address, the redraw. A name here clicks its rectangle, so a
+  // change by name is the app's own change by map. The list is built from the
+  // rectangles, in the frameset's order, so it names exactly what the map
+  // draws.
+  //
+  // The names are links, so the app's link style applies, dark mode
+  // included. The page opens the dialog on any click or keypress on a link
+  // in this column, so both stop at the name.
+  var FRAME_LIST_CLASS = 'cm-helper-frame-list';
+  var FRAME_LIST_CSS =
+    '.frameSelector > a.cm-helper-dialog-link { display: none !important; }\n' +
+    '.' + FRAME_LIST_CLASS + ' { margin: 6px 0 8px; }\n' +
+    '.' + FRAME_LIST_CLASS + ' li { display: flex; align-items: center; gap: 6px; ' +
+      'margin: 3px 0; line-height: 1.3; }\n' +
+    '.' + FRAME_LIST_CLASS + ' .cm-helper-frame-swatch { flex: none; width: 10px; ' +
+      'height: 10px; }\n' +
+    '.' + FRAME_LIST_CLASS + ' .cm-helper-frame-current { font-weight: 600; }';
+  var frameListEl = null;
+
+  function scheduleFrames() {
+    var layout = window.App && window.App.view;
+    var page = layout && layout.currentView;
+    var channel = page && page.channel;
+    var frameset = channel && typeof channel.get === 'function' ? channel.get('frameset') : null;
+    return frameset && frameset.frames ? { page: page, frames: frameset.frames } : null;
+  }
+
+  function removeFrameList() {
+    var lists = document.querySelectorAll('.' + FRAME_LIST_CLASS);
+    for (var i = 0; i < lists.length; i++) lists[i].parentNode.removeChild(lists[i]);
+    var links = document.querySelectorAll('a.cm-helper-dialog-link');
+    for (var k = 0; k < links.length; k++) links[k].classList.remove('cm-helper-dialog-link');
+    if (frameListEl && frameListEl.parentNode) frameListEl.parentNode.removeChild(frameListEl);
+    frameListEl = null;
+  }
+
+  function frameEntry(frame, current, rect) {
+    var li = document.createElement('li');
+    var swatch = document.createElement('span');
+    swatch.className = 'cm-helper-frame-swatch';
+    swatch.style.backgroundColor = frame.color || 'transparent';
+    li.appendChild(swatch);
+    if (current) {
+      var name = document.createElement('span');
+      name.className = 'cm-helper-frame-current';
+      name.textContent = frame.name;
+      li.appendChild(name);
+      return li;
+    }
+    var a = document.createElement('a');
+    a.setAttribute('href', '#');
+    a.textContent = frame.name;
+    a.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      // The rectangle is looked up again at click time: the map is redrawn
+      // on every frame change, and a stale node would be out of the page.
+      var target = document.getElementById(rect);
+      if (target && target.closest('.framesetThumbnail')) target.click();
+    });
+    // 13.50 also opens the dialog on a keypress. Enter still clicks the link.
+    a.addEventListener('keypress', function (e) { e.stopPropagation(); });
+    li.appendChild(a);
+    return li;
+  }
+
+  function applyFrameList() {
+    if (!CONFIG.frameList) {
+      removeFrameList();
+      return;
+    }
+    var box = document.querySelector('.scheduleLanding .frameSelector');
+    var found = box && scheduleFrames();
+    if (!found) return;
+    var rects = box.querySelectorAll('.framesetThumbnail > div[id]');
+    if (!rects.length) return;
+
+    var drawn = {};
+    var current = null;
+    for (var r = 0; r < rects.length; r++) {
+      drawn[rects[r].id] = true;
+      if (rects[r].classList.contains('thumbnailFrameSelected')) current = rects[r].id;
+    }
+    var frames = [];
+    for (var f = 0; f < found.frames.length; f++) {
+      if (drawn[String(found.frames[f].id)]) frames.push(found.frames[f]);
+    }
+    if (!frames.length) return;
+
+    // Rebuilt only when what it shows has changed, so a sweep is a no-op.
+    var key = current + '|' + frames.map(function (x) { return x.id + ':' + x.name; }).join(',');
+    var list = box.querySelector('.' + FRAME_LIST_CLASS);
+    if (!list || list.getAttribute('data-cm-key') !== key) {
+      if (!frameListEl || !frameListEl.isConnected) {
+        frameListEl = makeStyle('cm-helper-frame-list');
+        frameListEl.textContent = FRAME_LIST_CSS;
+      }
+      var fresh = document.createElement('ul');
+      fresh.className = FRAME_LIST_CLASS;
+      fresh.setAttribute('data-cm-helper', 'true');
+      fresh.setAttribute('data-cm-key', key);
+      for (var k = 0; k < frames.length; k++) {
+        var id = String(frames[k].id);
+        fresh.appendChild(frameEntry(frames[k], id === current, id));
+      }
+      var thumb = box.querySelector('.thumbnail');
+      if (list) list.parentNode.replaceChild(fresh, list);
+      else if (thumb) thumb.parentNode.insertBefore(fresh, thumb.nextSibling);
+      else box.appendChild(fresh);
+    }
+    var dialogLink = box.querySelector(':scope > a:not(.cm-helper-dialog-link)');
+    if (dialogLink) dialogLink.classList.add('cm-helper-dialog-link');
+  }
+
   // ------------------------------------------------- player generate plan
 
   // Player Properties shows Reset, Save Changes and Save & Close only while
@@ -2916,6 +3045,25 @@
       '.onlineLicenses .content dt.active {',
       '  box-shadow: inset 0 3px 0 #ef4035 !important; }'
     ].concat(darkLogoSwaps());
+    // The schedule calendar draws its hour lines with a white tile,
+    // scheduleGrid.png: 2x42 pixels of white, with #ddd in one pixel of row 20
+    // and both pixels of row 41. Tiled, that is a dotted half-hour line and a
+    // solid hour line. The rule sets it with the background shorthand and no
+    // repeat keyword, so the tiled-image test misses it, and every empty hour
+    // stayed white. Widening that test would also strip the colour picker's
+    // sprites, which are written the same way. So the grid alone gets the
+    // same tile, transparent where the original is white, in the dark
+    // theme's own edge colour.
+    var gridLine = parseRgb(recolour([221, 221, 221, 1], 'edge'));
+    var gridHex = '%23' + gridLine.slice(0, 3).map(function (v) {
+      return ('0' + Math.round(v).toString(16)).slice(-2);
+    }).join('');
+    lines.push('.scheduleContainer .contents .schedule .grid {',
+      '  background-image: url("data:image/svg+xml,' +
+      '%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'2\' height=\'42\' shape-rendering=\'crispEdges\'%3E' +
+      '%3Crect x=\'0\' y=\'20\' width=\'1\' height=\'1\' fill=\'' + gridHex + '\'/%3E' +
+      '%3Crect x=\'0\' y=\'41\' width=\'2\' height=\'1\' fill=\'' + gridHex + '\'/%3E' +
+      '%3C/svg%3E") !important; }');
     // The search suggestions mark the chosen item #eee, which the surface
     // mapping turns into the menu's own near-black.
     lines.push('html body .freeTextSearch .dropdown-menu li.active > a,',
@@ -3621,6 +3769,14 @@
       blurb: 'A channel\'s Non-Scheduled Content tab links to its playlist, and reads ' +
              'Non-Scheduled Content (1) while a playlist is set, the way the tabs ' +
              'beside it show their counts.',
+      advanced: []
+    },
+    {
+      title: 'Frame List',
+      master: 'frameList',
+      blurb: 'The schedule page lists a channel\'s frames by name under the frame map, ' +
+             'each one a click away, in place of the Select a Different Frame dialog. ' +
+             'A frame hidden behind another on the map is easy to reach.',
       advanced: []
     },
     {
@@ -4346,6 +4502,7 @@
     runFeature('filePicker', applyFilePicker);
     runFeature('playlistLink', applyPlaylistLink);
     runFeature('nonScheduledContent', applyNonScheduledContent);
+    runFeature('frameList', applyFrameList);
     runFeature('generatePlan', applyGeneratePlan);
     runFeature('userMenu', installUserMenuItem);
     runFeature('welcome', welcomeOnce);

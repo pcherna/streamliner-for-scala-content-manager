@@ -64,6 +64,10 @@ The Timeslot Properties dialog links to its playlist again. Content Manager show
 
 A channel's Non-Scheduled Content tab links to its playlist, and reads Non-Scheduled Content (1) while a playlist is set, the way the tabs beside it show their counts.
 
+### Frame List
+
+The schedule page lists a channel's frames by name under the frame map, each one a click away, in place of the Select a Different Frame dialog. A frame hidden behind another on the map is easy to reach.
+
 ### Player Generate Plan
 
 Player Properties shows a Generate Plan button when there are no unsaved changes, so you need not go back to the player list to generate the plan.
