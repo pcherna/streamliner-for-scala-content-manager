@@ -63,7 +63,7 @@
     searchHotkey: '/',
 
     // ---- appearance ------------------------------------------------------
-    // Pinned side menus show labels instead of icons.
+    // Pinned side menus stay open, with labels and section headers, not icons.
     textOnlyPinnedMenu: true,
     pinnedMenuWidth: '118px',
     // Hover and keyboard-focus highlight for the compact menu rows.
@@ -815,18 +815,37 @@
     '.leftPinnedMenu li a:hover, .rightPinnedMenu li a:hover,',
     '.leftPinnedMenu li a:focus-visible, .rightPinnedMenu li a:focus-visible {',
     '  background-color: %H% !important; }',
-    // The pin/unpin arrows are svg too, and must stay visible.
+    // The compact menus stay open while the feature is on, so the pin and
+    // unpin arrows go.
     '.showLeftPinnedMenu, .hideLeftPinnedMenu,',
-    '.showRightPinnedMenu, .hideRightPinnedMenu { display: block !important; }',
-    // The arrow shares its row with the first entry, and with icons gone the
-    // label runs straight into it: on the right they abutted at exactly 0px.
-    // Give that one row the arrow's width back as padding. The left arrow sits
-    // at the end of the row, the right one at the start.
-    // Margin, not padding: padding sits inside the box, so the hover pill still
-    // covered the arrow. Margin keeps the box, and the highlight, clear of it.
-    '.leftPinnedMenu section.settings li a { margin-right: 26px !important; }',
-    '.rightPinnedMenu section.settings li a { margin-left: 28px !important; }'
+    '.showRightPinnedMenu, .hideRightPinnedMenu { display: none !important; }',
+    // Open is the app's pinned state, done without the click. That click saves
+    // gui.pinned.menu.show.* to the user's account, and this must not outlive
+    // the feature. The app shows a pinned menu by dropping .hidden, and hides
+    // the fly-in toggle it replaces: the hamburger on the left, the cog on the
+    // right. The html class is withheld on the login page, which hides both
+    // menus itself.
+    'html.cm-helper-pinned-open .leftPinnedMenu.hidden,',
+    'html.cm-helper-pinned-open .rightPinnedMenu.hidden { display: table-cell !important; }',
+    'html.cm-helper-pinned-open header .primary-navbar-toggle,',
+    'html.cm-helper-pinned-open header .system-menu .system-cog { display: none !important; }',
+    // Section headers copied from the fly-in menus. They are real h4s, so
+    // light.css's own section-heading colours apply, the white one on the dark
+    // Scala Apps block included, and dark mode recolours them like any other
+    // app rule. Only the size and spacing are ours. The side margin lines the
+    // text up with the labels: 4px of ul margin plus 6px of anchor padding.
+    '.leftPinnedMenu section > h4.cm-helper-section-head,',
+    '.rightPinnedMenu section > h4.cm-helper-section-head {',
+    '  display: block !important; margin: 10px 10px 3px !important; padding: 0 !important;',
+    '  font-size: 10px !important; font-weight: 600 !important; line-height: 1.3 !important;',
+    '  text-transform: uppercase; letter-spacing: .06em; opacity: .75;',
+    '  white-space: normal; overflow-wrap: anywhere; }',
+    // Scala Apps is a padded block of its own, so a top margin only adds a gap.
+    '.leftPinnedMenu section.scalaApps > h4.cm-helper-section-head { margin-top: 0 !important; }'
   ].join('\n');
+
+  var PINNED_SECTION = '.leftPinnedMenu section, .rightPinnedMenu section';
+  var PINNED_HEAD = 'cm-helper-section-head';
 
   var pinnedEl = null;
 
@@ -915,6 +934,42 @@
       a.classList[label ? 'add' : 'remove']('cm-helper-has-label');
     }
     if (items.length) log('pinned menu: ' + labelled + '/' + items.length + ' items labelled');
+    applyPinnedHeads();
+    document.documentElement.classList[onLoginPage() ? 'remove' : 'add']('cm-helper-pinned-open');
+  }
+
+  // The compact menus render the fly-in menus' sections without their h4
+  // headers, so Content, Planning and the rest run together. Each pinned
+  // section shares its class with a fly-in section (content, planning,
+  // management...), which has the header in the app's own language. A section
+  // with no header in the fly-in, such as settings, gets none here either.
+  function applyPinnedHeads() {
+    var sections = document.querySelectorAll(PINNED_SECTION);
+    for (var i = 0; i < sections.length; i++) {
+      var section = sections[i];
+      var text = '';
+      for (var j = 0; j < section.classList.length && !text; j++) {
+        var name = section.classList[j];
+        if (name === 'modules-header') continue;
+        var sources = document.querySelectorAll('.navbar-sidebar-menu section.' + CSS.escape(name) + ' > h4');
+        for (var k = 0; k < sources.length && !text; k++) {
+          if (sources[k].classList.contains(PINNED_HEAD)) continue;
+          text = sources[k].textContent.trim();
+        }
+      }
+      var head = section.querySelector(':scope > h4.' + PINNED_HEAD);
+      if (!text) {
+        if (head) section.removeChild(head);
+        continue;
+      }
+      if (!head) {
+        head = document.createElement('h4');
+        head.className = PINNED_HEAD;
+        head.setAttribute('data-cm-helper', 'true');
+        section.insertBefore(head, section.firstChild);
+      }
+      if (head.textContent !== text) head.textContent = text;
+    }
   }
 
   // Turning the feature off has to undo what it did. Dropping the sheet alone
@@ -924,6 +979,16 @@
   function removePinnedMenu() {
     if (pinnedEl && pinnedEl.parentNode) pinnedEl.parentNode.removeChild(pinnedEl);
     pinnedEl = null;
+    var wasOpen = document.documentElement.classList.contains('cm-helper-pinned-open');
+    document.documentElement.classList.remove('cm-helper-pinned-open');
+    // 13.50's updateView hides the cog inline on every view change while the
+    // right menu is visible, and only its own unpin shows it again. So when the
+    // app still has that menu unpinned, show the cog the way the unpin does.
+    var cog = document.getElementById('system-open-icon');
+    var right = document.querySelector('.rightPinnedMenu');
+    if (wasOpen && cog && right && right.classList.contains('hidden')) cog.style.display = '';
+    var heads = document.querySelectorAll('h4.' + PINNED_HEAD);
+    for (var h = 0; h < heads.length; h++) heads[h].parentNode.removeChild(heads[h]);
     var items = document.querySelectorAll(PINNED_ITEM);
     for (var i = 0; i < items.length; i++) {
       var a = items[i];
@@ -3307,9 +3372,9 @@
     {
       title: 'Text Only Compact Menus',
       master: 'textOnlyPinnedMenu',
-      blurb: '(Content Manager 12.50 and up) Lays out Content Manager\'s compact side ' +
-             'menus using text-only, which is easier to identify than the original ' +
-             'icons-only.',
+      blurb: '(Content Manager 12.50 and up) Keeps Content Manager\'s compact side ' +
+             'menus open, with text labels and section headers, which are easier to ' +
+             'identify than the original icons-only.',
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
     },
     {
@@ -3979,9 +4044,12 @@
   // sign-in button is what marks the login page on every version.
   var welcomeChecked = false;
 
+  function onLoginPage() {
+    return !!document.querySelector(SIGNIN_BUTTON) || /^#login\b/.test(location.hash);
+  }
+
   function signedIn() {
-    if (document.querySelector(SIGNIN_BUTTON)) return false;
-    if (/^#login\b/.test(location.hash)) return false;
+    if (onLoginPage()) return false;
     return !!document.querySelector('[data-streamliner-usermenu]');
   }
 

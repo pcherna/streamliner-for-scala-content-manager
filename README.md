@@ -28,7 +28,7 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 
 ### Text Only Compact Menus
 
-(Content Manager 12.50 and up) Lays out Content Manager's compact side menus using text-only, which is easier to identify than the original icons-only.
+(Content Manager 12.50 and up) Keeps Content Manager's compact side menus open, with text labels and section headers, which are easier to identify than the original icons-only.
 
 ### List Filters
 
