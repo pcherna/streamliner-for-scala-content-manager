@@ -82,6 +82,10 @@ Improves the file selection for a maintenance job's Install File task. It lists 
 
 Adds a keyboard shortcut to focus each page's search box. Defaults to `/`, but can be changed to for example `Ctrl+k` or `Cmd+k`. In a dialog, the shortcut reaches the dialog's own search box.
 
+### Page Keys
+
+The `<` and `>` keys go to the previous and next page of any paged list, or of the open dialog. The pager's `<` and `>` buttons say so in their tooltips. Like the search shortcut, the keys do nothing while you are typing in a field.
+
 ### Host Identification
 
 Shows the URL of this Content Manager on the login page and on the tab title. Useful if you're working with multiple instances.

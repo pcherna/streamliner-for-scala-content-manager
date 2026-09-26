@@ -61,6 +61,9 @@
     // A single key, or one with modifiers: "/", "cmd+k", "ctrl+k", "alt+s".
     // A bare key is ignored while you are typing; a modifier combination is not.
     searchHotkey: '/',
+    // < and > turn the page on any paged list, in a dialog if one is open.
+    // Ignored while you are typing, like the search key.
+    pageKeys: true,
 
     // ---- appearance ------------------------------------------------------
     // Pinned side menus stay open, with labels and section headers, not icons.
@@ -3804,6 +3807,13 @@
       advanced: []
     },
     {
+      title: 'Page Keys',
+      master: 'pageKeys',
+      blurb: 'The < and > keys go to the previous and next page of any paged list, ' +
+             'or of the open dialog. The pager\'s < and > buttons say so in their tooltips.',
+      advanced: []
+    },
+    {
       title: 'Host Identification',
       // No single boolean owns this one, so the master is both sub-options at
       // once: off turns both off, on restores both.
@@ -4351,6 +4361,67 @@
     return true;
   }
 
+  // ------------------------------------------------------------ page keys
+
+  // Every paged list, and every dialog that pages, uses one component,
+  // components/list/paging: a div.paging of a.page links reading << < 1 2 3
+  // > >>, above the list and again below it. A click on < or > asks the list
+  // for that page, and a disabled one swallows its click. So the keys click
+  // those links, and a page turned by key is the app's own page turn.
+  //
+  // The keys match the character typed, with Shift allowed: US keyboards
+  // type < as Shift+comma, and German ones have a key of its own. Any other
+  // modifier means a different shortcut. An open dialog is modal, so it
+  // takes the keys, and when it has no pager they do nothing.
+  var PAGE_KEYS = { '<': 'previous', '>': 'next' };
+
+  function pagerLink(label) {
+    var dialog = openDialog();
+    var pagers = (dialog || document).querySelectorAll('div.paging');
+    for (var i = 0; i < pagers.length; i++) {
+      if (!isVisible(pagers[i])) continue;
+      if (!dialog && pagers[i].closest(DIALOG_SELECTOR)) continue;
+      var links = pagers[i].querySelectorAll('a.page');
+      for (var k = 0; k < links.length; k++) {
+        if (links[k].textContent.trim() === label) return links[k];
+      }
+    }
+    return null;
+  }
+
+  function onPageKey(e) {
+    if (!CONFIG.pageKeys || !PAGE_KEYS.hasOwnProperty(e.key)) return false;
+    if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target)) return false;
+    var link = pagerLink(e.key);
+    if (!link) return false;
+    e.preventDefault();
+    if (!link.classList.contains('disabled')) link.click();
+    return true;
+  }
+
+  // The keys are named in the tooltips of the links they press, in the app's
+  // own words for previous and next. A title the app set itself is left be.
+  function applyPageKeyTitles() {
+    var links = document.querySelectorAll('div.paging a.page');
+    for (var i = 0; i < links.length; i++) {
+      var a = links[i];
+      var label = a.textContent.trim();
+      var mine = a.hasAttribute('data-cm-title');
+      if (!CONFIG.pageKeys || !PAGE_KEYS.hasOwnProperty(label)) {
+        if (mine) {
+          a.removeAttribute('title');
+          a.removeAttribute('data-cm-title');
+        }
+        continue;
+      }
+      if (!mine && a.hasAttribute('title')) continue;
+      var key = PAGE_KEYS[label];
+      var wanted = appText(key, key === 'next' ? 'Next' : 'Previous') + ' (' + label + ')';
+      if (a.getAttribute('title') !== wanted) a.setAttribute('title', wanted);
+      if (!mine) a.setAttribute('data-cm-title', 'true');
+    }
+  }
+
   // Advertise the shortcut in the box itself, so it can be discovered.
   function decorateSearchBox() {
     if (!CONFIG.focusSearch) return;
@@ -4379,6 +4450,7 @@
       return;
     }
     if (e.defaultPrevented || panel) return;
+    if (onPageKey(e)) return;
     if (!CONFIG.focusSearch || !CONFIG.searchHotkey) return;
 
     var hotkey = parseHotkey(CONFIG.searchHotkey);
@@ -4508,6 +4580,7 @@
     runFeature('welcome', welcomeOnce);
     runFeature('fonts', watchFonts);
     runFeature('searchBox', decorateSearchBox);
+    runFeature('pageKeys', applyPageKeyTitles);
     runFeature('darkMode', refreshDark);
     runFeature('signIn', function () {
       // Off means off: the poll has to be stopped, not just left unstarted.
