@@ -105,6 +105,11 @@
     // user in no workgroup, though the playlist opens fine. This links it.
     timeslotPlaylistLink: true,
 
+    // A channel's Non-Scheduled Content tab names its playlist as plain text,
+    // and the tab gives no sign that one is set. This links the name and
+    // labels the tab "(1)" the way its neighbours show their counts.
+    nonScheduledContent: true,
+
     // Player Properties offers Generate Plan while there is nothing to save,
     // so the plan can be made without going back to the player list.
     playerGeneratePlan: true,
@@ -2528,6 +2533,83 @@
     });
   }
 
+  // ------------------------------------------- non-scheduled content tab
+
+  // The schedule page's Non-Scheduled Content tab holds at most one playlist.
+  // Its view writes the name as plain text, and the tab label never changes,
+  // while Time Triggers beside it reads "Time Triggers (1)". This links the
+  // name where the timeslot dialog's own link goes, and gives the tab "(1)"
+  // while a playlist is set, including an unsaved Change or Remove.
+  //
+  // The view is created in a fetch callback and renders at once, so a
+  // prototype patch could land after the first render. Instead each pass
+  // reads the live view off the page, where the schedule page keeps it as
+  // nonScheduledContendSelector (the app's spelling), and the playlist it
+  // holds. The app rewrites the name with jQuery's text(), which drops the
+  // link, and the next pass puts it back.
+  var NSC_LINK_CLASS = 'cm-helper-nsc-link';
+  var NSC_LABEL_ATTR = 'data-cm-label';
+
+  function nonScheduledView() {
+    var layout = window.App && window.App.view;
+    var page = layout && layout.currentView;
+    var view = page && page.nonScheduledContendSelector;
+    if (!view || !view.el || !document.body.contains(view.el)) return null;
+    return { page: page, view: view };
+  }
+
+  // The timeslot dialog's own test for its link, without the workgroup half
+  // that Timeslot Playlist Link works around.
+  function canViewPlaylists() {
+    var Resource = appRequire('support/Resource');
+    var app = window.App;
+    return !!(Resource && app && typeof app.hasPermissionWithoutImplicit === 'function' &&
+      app.hasPermissionWithoutImplicit(Resource.PLAYLIST_VIEW));
+  }
+
+  function nonScheduledTab(page) {
+    return page.el && page.el.querySelector('dt[data-tabgroup="nonScheduledContent"]');
+  }
+
+  function applyNonScheduledContent() {
+    var found = nonScheduledView();
+    if (!found) return;
+    var playlist = found.view.playlist;
+    var set = !!(playlist && playlist.id);
+    var on = CONFIG.nonScheduledContent;
+
+    var name = found.view.el.querySelector('.playlist .name');
+    var link = name && name.querySelector('a.' + NSC_LINK_CLASS);
+    if (name && on && set && canViewPlaylists()) {
+      // The same destination as the timeslot dialog's navigateToPlaylist.
+      var href = '#' + (playlist.enableSmartPlaylist ? 'smartplaylists/' : 'playlists/') +
+        playlist.id + '/?*tab=items';
+      if (!link || link.getAttribute('href') !== href || link.textContent !== playlist.name) {
+        link = document.createElement('a');
+        link.className = NSC_LINK_CLASS;
+        link.setAttribute('data-cm-helper', 'true');
+        link.setAttribute('href', href);
+        link.textContent = playlist.name;
+        name.textContent = '';
+        name.appendChild(link);
+      }
+    } else if (link) {
+      name.textContent = set ? playlist.name : '';
+    }
+
+    // The label is the app's own, remembered before the first change, and the
+    // count is written the way the app writes "Time Triggers (1)".
+    var tab = nonScheduledTab(found.page);
+    if (!tab) return;
+    var base = tab.getAttribute(NSC_LABEL_ATTR);
+    if (base === null) {
+      base = tab.textContent.trim();
+      tab.setAttribute(NSC_LABEL_ATTR, base);
+    }
+    var wanted = on && set ? base + ' (1)' : base;
+    if (tab.textContent !== wanted) tab.textContent = wanted;
+  }
+
   // ------------------------------------------------- player generate plan
 
   // Player Properties shows Reset, Save Changes and Save & Close only while
@@ -3534,6 +3616,14 @@
       advanced: []
     },
     {
+      title: 'Non-Scheduled Content',
+      master: 'nonScheduledContent',
+      blurb: 'A channel\'s Non-Scheduled Content tab links to its playlist, and reads ' +
+             'Non-Scheduled Content (1) while a playlist is set, the way the tabs ' +
+             'beside it show their counts.',
+      advanced: []
+    },
+    {
       title: 'Player Generate Plan',
       master: 'playerGeneratePlan',
       blurb: 'Player Properties shows a Generate Plan button when there are no unsaved ' +
@@ -4255,6 +4345,7 @@
     runFeature('bypassUsage', applyBypassUsage);
     runFeature('filePicker', applyFilePicker);
     runFeature('playlistLink', applyPlaylistLink);
+    runFeature('nonScheduledContent', applyNonScheduledContent);
     runFeature('generatePlan', applyGeneratePlan);
     runFeature('userMenu', installUserMenuItem);
     runFeature('welcome', welcomeOnce);
