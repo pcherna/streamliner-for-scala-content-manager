@@ -2652,7 +2652,14 @@
       '.mdc-icon-button::before, .mdc-icon-button::after,',
       '.mdc-radio::before, .mdc-radio::after,',
       '.mdc-checkbox::before, .mdc-checkbox::after {',
-      '  background-color: #ffffff !important; }'
+      '  background-color: #ffffff !important; }',
+      // 11.x marks the chosen detail tab with a white face and black text on
+      // a grey strip. Mapped, the face lands within a few percent of the page
+      // and #999 text stays near #000, so no tab stands out. An inset line
+      // in Scala red marks it instead, without the layout shift of a border.
+      '.detail dt.active, .newPlayerDetail dt.active, .newUploadDetail dt.active,',
+      '.onlineLicenses .content dt.active {',
+      '  box-shadow: inset 0 3px 0 #ef4035 !important; }'
     ].concat(darkLogoSwaps());
     // The search suggestions mark the chosen item #eee, which the surface
     // mapping turns into the menu's own near-black.
