@@ -658,3 +658,48 @@ test('Content Manager: the files as 11.07 and 12.00 write them are accepted', ()
     assert.equal(typeof app.streamliner.version, 'string', version);
   }
 });
+
+// A stand-in for the app's language file: jquery.i18n.properties answers a
+// missing key with "[key]" and fills {0} from its second argument.
+function withLanguage(t, code, messages) {
+  t.window.App = { getSession: () => ({ languageCode: code }) };
+  t.window.jQuery = {
+    i18n: {
+      prop(key, arg) {
+        if (!Object.prototype.hasOwnProperty.call(messages, key)) return '[' + key + ']';
+        return arg === undefined ? messages[key] : messages[key].split('{0}').join(String(arg));
+      }
+    }
+  };
+  return t;
+}
+
+test('app text: the app wording, the English fallback, and the count in place', () => {
+  const t = withLanguage(load(), 'pl', {
+    'usage.message': 'Liczba komunikatów: {0}',
+    'usage.messages': 'Liczba komunikatów: {0}',
+    'ok': 'OK'
+  });
+  const { appText, appCount } = t.internals;
+  assert.equal(appText('ok', 'fallback'), 'OK');
+  assert.equal(appText('no.such.key', 'Used:'), 'Used:', 'a missing key falls back');
+  assert.equal(appCount(3, 'usage.message', 'usage.messages', '{0} Message', '{0} Messages'),
+    'Liczba komunikatów: 3', 'the translation decides where the count goes');
+  assert.equal(appCount(1, 'usage.playlist', 'usage.playlists', '{0} Playlist', '{0} Playlists'),
+    '1 Playlist', 'a missing plural key falls back with the count filled in');
+
+  const bare = load().internals;
+  assert.equal(bare.appText('ok', 'OK'), 'OK', 'no language file at all');
+  assert.equal(bare.appCount(2, 'a', 'b', '{0} Message', '{0} Messages'), '2 Messages');
+});
+
+test('label overrides: English defaults stay in English, user overrides apply everywhere', () => {
+  const custom = { 'maintenance-job': 'Maintenance', 'player-health': 'Probleme' };
+  const storage = { streamlinerConfig: JSON.stringify({ labelOverrides: custom }) };
+
+  const de = withLanguage(load({ storage }), 'de', {}).internals.buildOverrideIndex();
+  same(de, { 'player-health': 'Probleme' }, 'an untouched default is skipped outside English');
+
+  const en = withLanguage(load({ storage }), 'en', {}).internals.buildOverrideIndex();
+  same(en, { 'maintenance-job': 'Maintenance', 'player-health': 'Probleme' });
+});

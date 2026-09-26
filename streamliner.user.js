@@ -69,14 +69,16 @@
     // Hover and keyboard-focus highlight for the compact menu rows.
     pinnedHoverColor: 'rgba(128,128,128,.30)',
     // Shorter labels for the compact menus only. The fly-in menu is untouched.
-    // Keys are the full label text. The full text stays as the hover tooltip.
+    // A key is the item's data-test id, which is the same in every language,
+    // or its full label text. The full text stays as the hover tooltip. These
+    // defaults are English, so they apply only while the app is in English.
     labelOverrides: {
-      'Settings': 'Report Settings',
-      'Maintenance Jobs': 'Maintenance',
-      'Scala Apps Configuration': 'Apps Config',
-      'View API Documentation': 'API Docs',
-      'Player Updater Management': 'Player Updaters',
-      'Scala Software Updates blog': 'Scala Updates blog'
+      'report-settings': 'Report Settings',
+      'maintenance-job': 'Maintenance',
+      'scala-apps-configuration': 'Apps Config',
+      'api-documentation': 'API Docs',
+      'playerupdater': 'Player Updaters',
+      'release-notes': 'Scala Updates blog'
     },
     // Shows a long filter list in full, in a box that scrolls.
     scrollListFilters: true,
@@ -200,9 +202,54 @@
   var SIGNIN_BUTTON = 'button.signIn';
   var ANCESTOR_DEPTH = 5;
   var SEARCH_SELECTOR = 'input.search, input#search, input[type="search"]';
+  // ------------------------------------------------------- app language
+
+  // Content Manager comes in 18 languages. It picks one per user, keeps the
+  // code in the session, and loads messages.properties with that language's
+  // file over it, so a key the translation lacks falls back to English.
+  // Anything the helper writes into the app's own pages takes the app's
+  // wording from there, and keeps its own English only where the app has
+  // no key for it. The settings panel is the helper's own, and stays English.
+  function appLanguage() {
+    try {
+      var code = window.App && window.App.getSession && window.App.getSession().languageCode;
+      if (code) return String(code);
+    } catch (e) { /* no session yet */ }
+    return String(navigator.language || 'en');
+  }
+
+  function appIsEnglish() {
+    return /^en\b/i.test(appLanguage());
+  }
+
+  // The app's text for key, with arg filled in for its {0}. Word order is the
+  // translation's: German reads "{0} Nachrichten", Polish "Liczba komunikatów:
+  // {0}", so the count is never glued on here. A missing key comes back from
+  // the app as "[key]", and then the English fallback is used instead.
+  function appText(key, fallback, arg) {
+    var jq = window.jQuery;
+    try {
+      if (jq && jq.i18n && typeof jq.i18n.prop === 'function') {
+        var text = arg === undefined ? jq.i18n.prop(key) : jq.i18n.prop(key, arg);
+        if (text && text !== '[' + key + ']' && text !== key) return String(text);
+      }
+    } catch (e) { /* bundle not loaded */ }
+    return arg === undefined ? fallback : fallback.split('{0}').join(String(arg));
+  }
+
+  // The app words counts as a singular and a plural key, chosen the way it
+  // chooses them: one is singular, anything else plural.
+  function appCount(n, one, many, oneFallback, manyFallback) {
+    return n === 1 ? appText(one, oneFallback, n) : appText(many, manyFallback, n);
+  }
+
   // The entry in the top-right dropdown is not optional: it is the only way
-  // to reach the settings, so there is no setting to turn it off.
-  var SETTINGS_LABEL = 'Streamliner Settings';
+  // to reach the settings, so there is no setting to turn it off. The app has
+  // no words for it, and "Settings" goes before or after the name depending
+  // on the language, so outside English it is the name alone.
+  function settingsLabel() {
+    return appIsEnglish() ? 'Streamliner Settings' : 'Streamliner';
+  }
 
   // Captured before any patching, so the helper's own timers stay unscaled.
   var nativeSetTimeout = window.setTimeout.bind(window);
@@ -841,7 +888,15 @@
     '  text-transform: uppercase; letter-spacing: .06em; opacity: .75;',
     '  white-space: normal; overflow-wrap: anywhere; }',
     // Scala Apps is a padded block of its own, so a top margin only adds a gap.
-    '.leftPinnedMenu section.scalaApps > h4.cm-helper-section-head { margin-top: 0 !important; }'
+    '.leftPinnedMenu section.scalaApps > h4.cm-helper-section-head { margin-top: 0 !important; }',
+    // Translated labels run long, and some are one word: "Netzwerkeinstellungen"
+    // is 21 letters in a 118px menu, which overflow-wrap splits at any letter.
+    // Hyphenation splits it where German would. It needs the menu's language,
+    // which applyMenuLanguage sets, and only outside English, so the English
+    // labels keep the breaks they have always had.
+    '.leftPinnedMenu[data-cm-lang] a.cm-helper-has-label > *,',
+    '.rightPinnedMenu[data-cm-lang] a.cm-helper-has-label > *,',
+    '[data-cm-lang] h4.cm-helper-section-head { -webkit-hyphens: auto; hyphens: auto; }'
   ].join('\n');
 
   var PINNED_SECTION = '.leftPinnedMenu section, .rightPinnedMenu section';
@@ -854,11 +909,19 @@
   }
 
   // Rebuilt on every pass so edits to CONFIG.labelOverrides take effect live.
+  // A default left as it came is English, and outside English it would put an
+  // English word among translated ones, so it is skipped there. An override
+  // the user wrote is in their own words and applies in any language.
   function buildOverrideIndex() {
     var index = {};
     var src = CONFIG.labelOverrides || {};
+    var defaults = DEFAULTS.labelOverrides;
+    var english = appIsEnglish();
     for (var key in src) {
-      if (Object.prototype.hasOwnProperty.call(src, key)) index[normalizeLabel(key)] = src[key];
+      if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+      if (!english && Object.prototype.hasOwnProperty.call(defaults, key) &&
+          defaults[key] === src[key]) continue;
+      index[normalizeLabel(key)] = src[key];
     }
     return index;
   }
@@ -900,8 +963,11 @@
     a.setAttribute('data-cm-full', full);
     if (!a.getAttribute('title')) a.setAttribute('title', full);
 
+    // The data-test id first, because it names the item in every language.
+    var id = normalizeLabel(a.getAttribute('data-test') || '');
     var key = normalizeLabel(full);
-    var text = Object.prototype.hasOwnProperty.call(index, key) ? index[key] : full;
+    var has = Object.prototype.hasOwnProperty;
+    var text = id && has.call(index, id) ? index[id] : has.call(index, key) ? index[key] : full;
 
     if (existing) {
       if (existing.textContent.trim() !== text) existing.textContent = text;
@@ -935,7 +1001,27 @@
     }
     if (items.length) log('pinned menu: ' + labelled + '/' + items.length + ' items labelled');
     applyPinnedHeads();
+    applyMenuLanguage();
     document.documentElement.classList[onLoginPage() ? 'remove' : 'add']('cm-helper-pinned-open');
+  }
+
+  // The browser hyphenates by the element's language, and 13.50 writes
+  // <html lang="en"> whatever language the user has, so German labels would be
+  // split by English rules. The menus get the user's language instead. The
+  // marker attribute records that the lang is ours, for teardown.
+  function applyMenuLanguage() {
+    var lang = appIsEnglish() ? '' : appLanguage();
+    var menus = document.querySelectorAll('.leftPinnedMenu, .rightPinnedMenu');
+    for (var i = 0; i < menus.length; i++) {
+      var menu = menus[i];
+      if (lang) {
+        if (menu.getAttribute('lang') !== lang) menu.setAttribute('lang', lang);
+        if (menu.getAttribute('data-cm-lang') !== lang) menu.setAttribute('data-cm-lang', lang);
+      } else if (menu.hasAttribute('data-cm-lang')) {
+        menu.removeAttribute('lang');
+        menu.removeAttribute('data-cm-lang');
+      }
+    }
   }
 
   // The compact menus render the fly-in menus' sections without their h4
@@ -987,6 +1073,11 @@
     var cog = document.getElementById('system-open-icon');
     var right = document.querySelector('.rightPinnedMenu');
     if (wasOpen && cog && right && right.classList.contains('hidden')) cog.style.display = '';
+    var langs = document.querySelectorAll('[data-cm-lang]');
+    for (var g = 0; g < langs.length; g++) {
+      langs[g].removeAttribute('lang');
+      langs[g].removeAttribute('data-cm-lang');
+    }
     var heads = document.querySelectorAll('h4.' + PINNED_HEAD);
     for (var h = 0; h < heads.length; h++) heads[h].parentNode.removeChild(heads[h]);
     var items = document.querySelectorAll(PINNED_ITEM);
@@ -1487,7 +1578,7 @@
       ? usageClauses(TEMPLATE_KIND, { messagesCount: count }, id) : null;
 
     var label = document.createElement('label');
-    label.textContent = clauses ? BYPASS_LABEL : 'Used:';
+    label.textContent = clauses ? bypassLabel() : usedLabel();
     li.appendChild(label);
 
     if (clauses) {
@@ -1503,7 +1594,9 @@
     // The app uses a bare href="usage" and handles the click itself. Kept for
     // the styling that hangs off it; the click is ours.
     a.setAttribute('href', 'usage');
-    a.textContent = count === 1 ? '1\u00a0time' : count + '\u00a0times';
+    // The media list's own pair, so the line reads as the app's does.
+    a.textContent = appCount(count, 'media.list.usageCount.place', 'media.list.usageCount.places',
+      '{0} time', '{0} times').replace(/ /g, '\u00a0');
     a.addEventListener('click', function (e) {
       e.preventDefault();
       // The row behind the link has its own click handler. Without this the
@@ -1616,11 +1709,11 @@
 
     var header = usageEl('div', 'header');
     var h4 = document.createElement('h4');
-    h4.textContent = 'Usage';
+    h4.textContent = appText('usage.title', 'Usage');
     header.appendChild(h4);
     var close = usageEl('a', 'close');
     close.setAttribute('href', '#');
-    close.textContent = '[ x ]';
+    close.textContent = appText('modal.close', '[ x ]');
     close.addEventListener('click', function (e) { e.preventDefault(); closeUsageDialog(); });
     header.appendChild(close);
     modal.appendChild(header);
@@ -1635,13 +1728,13 @@
     content.style.overflow = 'auto';
     var inner = usageEl('div', null);
     var p = document.createElement('p');
-    p.textContent = 'This item is in use in the following:';
+    p.textContent = appText('deleteTitleSingular', 'This item is in use in the following:');
     inner.appendChild(p);
     var ul = document.createElement('ul');
     var li = document.createElement('li');
     var link = document.createElement('a');
     link.setAttribute('href', usageMediaHash(id));
-    link.textContent = count === 1 ? '1 Message' : count + ' Messages';
+    link.textContent = appCount(count, 'usage.message', 'usage.messages', '{0} Message', '{0} Messages');
     link.addEventListener('click', closeUsageDialog);
     li.appendChild(link);
     ul.appendChild(li);
@@ -1654,7 +1747,7 @@
     // The app also carries an a.cancel here and hides it. Leaving it out is the
     // same thing on screen, without depending on whatever does the hiding.
     var ok = usageEl('button', 'button-primary save');
-    ok.textContent = 'OK';
+    ok.textContent = appText('ok', 'OK');
     ok.addEventListener('click', function (e) { e.preventDefault(); closeUsageDialog(); });
     actions.appendChild(ok);
     footer.appendChild(actions);
@@ -1714,8 +1807,15 @@
   // The label changes with the feature, because the line stops meaning the same
   // thing. "Used: 3 times" is a tally. "Used By: 3 Messages" names what is using
   // it. Every list gets the same label, including the channel list, whose own
-  // "Used in:" reads correctly but would be the odd one out.
-  var BYPASS_LABEL = 'Used By:';
+  // "Used in:" reads correctly but would be the odd one out. The app has no
+  // words for "Used By:", so outside English it keeps the app's own "Used:".
+  function bypassLabel() {
+    return appIsEnglish() ? 'Used By:' : usedLabel();
+  }
+
+  function usedLabel() {
+    return appText('media.list.label.usage', 'Used:');
+  }
 
   var BYPASS_MARK = 'data-streamliner-bypass';
   var BYPASS_HID = 'data-streamliner-hid';
@@ -1746,7 +1846,7 @@
       match: /^#\/?templates?(?:[\/?]|$)/,
       // No list call: the template usage feature has already fetched these.
       cats: [
-        { count: 'messagesCount', one: 'Message', many: 'Messages',
+        { count: 'messagesCount', noun: 'message',
           link: function (id) {
             return usageHash('#media/', { templates: { values: [String(id)] } });
           } }
@@ -1760,11 +1860,11 @@
       // back as messagesCount. On the playlist search below they agree.
       fields: 'id,usingMessagesCount,usingPlaylistsCount',
       cats: [
-        { count: 'playlistsCount', one: 'Playlist', many: 'Playlists',
+        { count: 'playlistsCount', noun: 'playlist',
           link: function (id) {
             return usageHash('#playlists/', { media: { values: [String(id)] } });
           } },
-        { count: 'messagesCount', one: 'Message', many: 'Messages',
+        { count: 'messagesCount', noun: 'message',
           link: function (id) {
             return usageHash('#media/', {
               type: { values: ['MESSAGE'] }, media: { values: [String(id)] }
@@ -1781,11 +1881,11 @@
       endpoint: 'playlists/search',
       fields: 'id,channelsCount,asSubPlaylistsCount,messagesCount',
       cats: [
-        { count: 'channelsCount', one: 'Channel', many: 'Channels',
+        { count: 'channelsCount', noun: 'channel',
           link: function (id) {
             return usageHash('#channel/', { playlists: { values: [String(id)] } });
           } },
-        { count: 'asSubPlaylistsCount', one: 'Playlist', many: 'Playlists',
+        { count: 'asSubPlaylistsCount', noun: 'playlist',
           link: function (id) {
             return usageHash('#playlists/', { playlist: { values: [String(id)] } });
           } },
@@ -1793,7 +1893,7 @@
         // message using it. Note what is absent: media-to-messages needs a
         // type discriminator and this does not, presumably because only a
         // message can hold a playlist, so there is nothing else to exclude.
-        { count: 'messagesCount', one: 'Message', many: 'Messages',
+        { count: 'messagesCount', noun: 'message',
           link: function (id) {
             return usageHash('#media/', { playlists: { values: [String(id)] } });
           } }
@@ -1870,11 +1970,19 @@
       var n = counts[cat.count];
       if (!n) continue;
       if (!cat.link) return null;
+      // Worded by the app's usage.message and usage.messages keys and their
+      // siblings, which is what the app's own usage dialog says.
+      var noun = cat.noun.charAt(0).toUpperCase() + cat.noun.slice(1);
+      var text = appCount(n, 'usage.' + cat.noun, 'usage.' + cat.noun + 's',
+        '{0} ' + noun, '{0} ' + noun + 's');
       out.push({
         // Non-breaking space, so a clause never wraps between the number and
         // the thing it counts. "2 playlists, 3 channels, 1 message" is three
         // pairs, and a line break inside one of them reads as a different list.
-        text: n + '\u00a0' + (n === 1 ? cat.one : cat.many),
+        // Only the space touching the number: the rest may be several words.
+        text: text.replace(new RegExp('(^|\\s)' + n + '(\\s|$)'), function (m, before, after) {
+          return (before ? '\u00a0' : '') + n + (after ? '\u00a0' : '');
+        }),
         href: cat.link(id)
       });
     }
@@ -1979,7 +2087,7 @@
     if (!li || li.getAttribute(BYPASS_MARK)) return;
     var clauses = usageClauses(kind, counts, id);
     if (!clauses) return;
-    paintClauses(li, clauses, ownAnchors(li), BYPASS_LABEL);
+    paintClauses(li, clauses, ownAnchors(li), bypassLabel());
   }
 
   // The copy-text kinds already count and name correctly, so the app's own
@@ -1994,7 +2102,7 @@
     if (!own.length) return;
     var text = own[0].textContent.replace(/\s+/g, ' ').trim();
     if (!text) return;
-    paintClauses(li, [{ text: text, href: kind.link(id) }], own, BYPASS_LABEL);
+    paintClauses(li, [{ text: text, href: kind.link(id) }], own, bypassLabel());
   }
 
   function applyBypassUsage() {
@@ -3272,8 +3380,8 @@
     for (var i = 0; i < icons.length; i++) icons[i].style.visibility = 'hidden';
 
     a.setAttribute('href', '#');
-    a.setAttribute('title', SETTINGS_LABEL);
-    a.setAttribute('aria-label', SETTINGS_LABEL);
+    a.setAttribute('title', settingsLabel());
+    a.setAttribute('aria-label', settingsLabel());
     a.removeAttribute('data-test');
     // Keep the logout classes. On 13.50 the dropdown is shown by toggling a
     // class on .system-menu, and the rules that hide the entry until it opens
@@ -3284,8 +3392,8 @@
     // event before any delegated logout handler can see it.
 
     var span = a.querySelector('span');
-    if (span) span.textContent = SETTINGS_LABEL;
-    else a.textContent = SETTINGS_LABEL;
+    if (span) span.textContent = settingsLabel();
+    else a.textContent = settingsLabel();
 
     a.addEventListener('click', function (e) {
       e.preventDefault();
@@ -3597,7 +3705,7 @@
       var hint = document.createElement('div');
       hint.style.cssText = 'font-size:12px;margin-top:8px';
       hint.textContent = 'To return to this settings dialog, click your username in Content ' +
-        'Manager\'s upper-right, and select the ' + SETTINGS_LABEL + ' entry that is added ' +
+        'Manager\'s upper-right, and select the ' + settingsLabel() + ' entry that is added ' +
         'to that drop-down.';
       head.appendChild(hint);
     }
@@ -3653,7 +3761,7 @@
         label.style.cssText = 'padding:8px 0 0;font-weight:550';
         label.innerHTML = 'labelOverrides<div style="font-weight:400;color:' + skin.muted +
           ';font-size:12px;margin-top:1px">One per line, ' +
-          '<code>Full label = Short label</code></div>';
+          '<code>Item id or full label = Short label</code></div>';
         container.appendChild(label);
 
         overridesField = document.createElement('textarea');
@@ -4006,10 +4114,12 @@
     if (!el) return;
     var base = el.getAttribute('data-cm-placeholder');
     if (base === null) {
-      base = el.getAttribute('placeholder') || 'Search';
+      base = el.getAttribute('placeholder') || appText('search', 'Search');
       el.setAttribute('data-cm-placeholder', base);
     }
-    var wanted = base + ' (' + label + ' to focus)';
+    // The app has no words for the hint, so outside English it is the key
+    // alone, which reads the same in any language.
+    var wanted = appIsEnglish() ? base + ' (' + label + ' to focus)' : base + ' [' + label + ']';
     if (el.getAttribute('placeholder') !== wanted) el.setAttribute('placeholder', wanted);
   }
 
@@ -4292,6 +4402,9 @@
         matchesHotkey: matchesHotkey,
         hotkeyLabel: hotkeyLabel,
         normalizeLabel: normalizeLabel,
+        appText: appText,
+        appCount: appCount,
+        buildOverrideIndex: buildOverrideIndex,
         textToOverrides: textToOverrides,
         overridesToText: overridesToText,
         parseRgb: parseRgb,

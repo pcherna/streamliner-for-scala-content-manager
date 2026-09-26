@@ -10,7 +10,13 @@ Streamliner does not modify the Content Manager server or any of its data. Excep
 * Maintenance Files Fixes
 * Search Suggestions
 
-To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. The settings open by themselves once, the first time you sign in to each Content Manager server after installing Streamliner.
+To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. In languages other than English, the entry is called **Streamliner**. The settings open by themselves once, the first time you sign in to each Content Manager server after installing Streamliner.
+
+## Languages
+
+Content Manager shows each user their own language. Text that Streamliner adds to Content Manager's pages uses Content Manager's own wording in that language, for example the usage counts and the usage dialog. A few additions have no wording in Content Manager. Outside English, the search box hint shows just the key, as in `Suchen [/]`. The usage breakdown uses Content Manager's own "Used:" label, and the settings entry is called **Streamliner**.
+
+The built-in short labels for the compact menus are English, so they apply only in English. Labels you add in the settings apply in every language. The Streamliner settings panel itself is in English.
 
 ## Use of AI Coding Tools
 
