@@ -1,32 +1,34 @@
 # Streamliner for Scala Content Manager
 
-Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension and as a userscript. Both run the same
+Streamliner provides various conveniences and fixes for Scala Content Manager, packaged as a Chrome extension (for Chrome, Edge, Chromium, and related browsers) and as a userscript (for Safari, Firefox, etc.). Both run the same
 `streamliner.user.js`.
 
-Streamliner does not modify the Content Manager server or any of its data. Except as noted here, features change only what the browser renders, and never contact the server at all. The following features do read from Content Manager using the same API the page itself uses, and they send GET requests only:
+Streamliner does not modify the Content Manager server or any of its data. Except as noted here, Streamliner's features change only what the browser renders, and never contact the server at all. The following features do read from Content Manager using the same API the page itself uses, and they send GET requests only:
 
 * Template Usage
 * Bypass Usage Dialog
 * Maintenance Files Fixes
 * Search Suggestions
 
-To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. In languages other than English, the entry is called **Streamliner**. The settings open by themselves once, the first time you sign in to each Content Manager server after installing Streamliner.
+To configure Streamliner, click your username in the upper-right, and select the **Streamliner Settings** entry that is added to that drop-down. In languages other than English, the entry is called **Streamliner**. The first time you sign in to each Content Manager server, Streamliner's settings open automatically.
 
 ## Languages
 
-Content Manager shows each user their own language. Text that Streamliner adds to Content Manager's pages uses Content Manager's own wording in that language, for example the usage counts and the usage dialog. A few additions have no wording in Content Manager. Outside English, the search box hint shows just the key, as in `Suchen [/]`. The usage breakdown uses Content Manager's own "Used:" label, and the settings entry is called **Streamliner**.
+Text that Streamliner adds to Content Manager's pages uses Content Manager's own wording in that language, for example the usage counts and the usage dialog.
 
-The built-in short labels for the compact menus are English, so they apply only in English. Labels you add in the settings apply in every language. The Streamliner settings panel itself is in English.
+The built-in short labels for the compact menus are English, so they apply only in English. The Advanced settings for this feature lets you add customizations for other languages (or for English) if you desire.
+
+The Streamliner settings panel itself is only in English.
 
 ## Use of AI Coding Tools
 
-This package was developed using Claude Code and Claude Opus 5.
+This package was developed using Claude Code and Claude Opus 5 and 5.5.
 
 ## Features
 
 ### Dark Mode
 
-Renders Content Manager using a dark mode theme. (Some images and other areas still need to be refined.)
+Applies a dark mode theme to Content Manager.
 
 ### UI Transition Speed
 
@@ -36,9 +38,13 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 
 (Content Manager 12.50 and up) Keeps Content Manager's compact side menus open, with text labels and section headers, which are easier to identify than the original icons-only.
 
+### Section Links
+
+(Content Manager 13.x) The side-menu entry for the section you are in, such as Playlists, stays a link while you are deeper in that section. It takes you back to the section's list.
+
 ### List Filters
 
-The various list filters only show the first several entries, with the rest hidden behind Show More. Now all choices are shown initially, in a box that scrolls.
+The various list filters only show the first several entries, with the rest hidden behind Show More. Now all choices are shown initially, in a box that scrolls. (This was already addressed by Scala in its newest versions.)
 
 ### Search Suggestions
 
@@ -50,11 +56,7 @@ Adds a Used: count to items in the template list, that links to those messages.
 
 ### Bypass Usage Dialog
 
-Breaks a Used: count into its parts in the list, such as 2 Channels and 1 Message. Each part links straight to what it counts, instead of via the Usage Dialog.
-
-### Section Links
-
-(Content Manager 13.x) The side-menu entry for the section you are in, such as Playlists, stays a link while you are deeper in that section. It takes you back to the section's list.
+Breaks a Used: count into its parts in the list, such as "2 Channels, 1 Message". Each part links straight to what it counts, instead of via the Usage Dialog.
 
 ### Timeslot Playlist Link
 
@@ -74,7 +76,7 @@ Player Properties shows a Generate Plan button when there are no unsaved changes
 
 ### Maintenance Files Fixes
 
-Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use. Upload opens the file chooser straight away, and a new upload is selected as soon as it appears. A task's Type list shows every choice without scrolling.
+Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use, since they are already annotated. Upload opens the file chooser straight away, and a new upload is pre-selected as soon as it appears. A task's Type list shows every choice without scrolling.
 
 ### Focus Search
 
@@ -102,22 +104,21 @@ JavaScript context to reach jQuery.
 
 Chrome's prompt says the extension can read and change your data on all sites.
 That is because the match pattern `*://*/ContentManager/*` puts the wildcard in
-the host position, so colleagues do not have to edit anything for their own
-server. The script still only runs on `/ContentManager` paths. Even there it
-does nothing unless the page loads Content Manager's own files, so other
-software at that path is left alone.
+the host position, so that it can find any of your Content Managers. The script
+still only runs on `/ContentManager` paths. Even there it does nothing unless the
+page loads Content Manager's own files, so other software at that path is left alone.
 
 Chrome adds a Streamliner button to its extensions menu. Click it to see the
 version number and a reminder of where the settings are. The button has no
 controls of its own. Settings stay on the Content Manager page, under your
 username.
 
-Pin the button to the toolbar if you want it in view.
+Pin the extension's button to the toolbar if you want this button in view.
 
 ### Install as a userscript
 
 On Chrome, prefer the extension above, because Chrome now makes you turn
-userscripts on by hand. On Firefox and Safari this is the only route.
+userscripts on by hand. On Firefox and Safari userscripts are the only route.
 
 1. Install a userscript manager. [Violentmonkey](https://violentmonkey.github.io/)
    is open source and works on Chrome, Firefox and Safari.
@@ -125,27 +126,13 @@ userscripts on by hand. On Firefox and Safari this is the only route.
 2. Open the [install link](https://raw.githubusercontent.com/pcherna/streamliner-for-scala-content-manager/main/streamliner.user.js). The manager offers to install it.
 3. Reload any open Content Manager tab.
 
-The manager then keeps itself up to date. It rechecks that same URL and installs
-a new copy whenever the `@version` line goes up.
-
-Either manager runs Streamliner the same way. Streamliner declares `@grant none`,
-so it uses none of the `GM_` functions that the two differ over.
+The manager checks that same URL for updates, and finds one whenever the
+`@version` line goes up. Some managers install an update on their own, and
+others only report it and wait for you.
 
 On Chrome, a userscript manager also needs its own permission before it can run
 anything. Open the manager's entry in `chrome://extensions` and turn on **Allow
-user scripts**. The extension above needs no such step.
-
-### Firefox and Safari
-
-Neither can load this folder as an extension the way Chrome can, so both use the
-userscript.
-
-Firefox could run it as an extension in principle. Firefox 128 and later support
-the page-context injection Streamliner needs. It would take a Gecko extension id
-and a signed build from addons.mozilla.org, neither of which is set up here.
-
-Safari is harder. A Safari extension has to be wrapped in a Mac app built with
-Xcode, and shipping it to anyone else needs a paid Apple developer account.
+user scripts**. The extension approach above needs no such step.
 
 ## Development
 
@@ -178,7 +165,7 @@ are in no way responsible for it.
 The Streamliner icon is my own artwork. It is not the Scala logo, and it is not
 derived from any Scala file.
 
-Disclaimer: I used to work there.
+Disclaimer: I used to work at Scala.
 
 ## License
 

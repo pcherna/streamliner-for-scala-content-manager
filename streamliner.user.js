@@ -3716,6 +3716,14 @@
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
     },
     {
+      title: 'Section Links',
+      master: 'sectionLinks',
+      blurb: '(Content Manager 13.x) The side-menu entry for the section you are in, ' +
+             'such as Playlists, stays a link while you are deeper in that section. It ' +
+             'takes you back to the section\'s list.',
+      advanced: []
+    },
+    {
       title: 'List Filters',
       master: 'scrollListFilters',
       blurb: 'The various list filters only show the first several entries, with the rest ' +
@@ -3745,14 +3753,6 @@
       blurb: 'Breaks a Used: count into its parts in the list, such as 2 Channels and ' +
              '1 Message. Each part links straight to what it counts, instead of via the ' +
              'Usage Dialog.',
-      advanced: []
-    },
-    {
-      title: 'Section Links',
-      master: 'sectionLinks',
-      blurb: '(Content Manager 13.x) The side-menu entry for the section you are in, ' +
-             'such as Playlists, stays a link while you are deeper in that section. It ' +
-             'takes you back to the section\'s list.',
       advanced: []
     },
     {
