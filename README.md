@@ -144,7 +144,7 @@ The pure parts of the script have tests that run in Node with nothing
 installed. They also check that the version agrees between `manifest.json`, the
 `@version` header and the settings panel.
 
-```
+```bash
 node --test
 ```
 
@@ -158,6 +158,13 @@ Streamliner is tested against the following versions of Scala Content Manager.
 * 11.07.xx
 * 12.00.xx
 * 13.50.xx
+
+## Contact
+
+Please report bugs and request features on [GitHub Issues](https://github.com/pcherna/streamliner-for-scala-content-manager/issues).
+
+I'm available for contract work on Scala Content Manager, including
+setup, scripting, troubleshooting, and custom tooling. Email me at [consulting@nightblade.net](mailto:consulting@nightblade.net).
 
 ## Scala
 
