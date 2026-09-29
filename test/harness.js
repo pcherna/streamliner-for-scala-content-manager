@@ -5,7 +5,7 @@
 // installed. The stand-in answers every DOM query with "nothing there": no
 // rows, no sheets, no sign-in form. The one exception is the pair of files in
 // <head> that prove the page is Content Manager: without them the script does
-// nothing at all. Pass markers: { profiles, version } to change their
+// nothing at all. Pass markers: { profiles, main } to change their
 // attributes (null leaves one out), or cm: false to leave both out. Anything
 // that needs real layout or real stylesheets stays a live test in Chrome.
 
@@ -62,7 +62,7 @@ function load(opts) {
   const warnings = [];
 
   const markers = Object.assign(
-    { profiles: 'images/profiles/?css=true', version: 'js/app/version.js?_=13.50.02' },
+    { profiles: 'images/profiles/?css=true', main: 'js/main.js?_=13.50.02' },
     opts.markers || {});
   function marker(tag, attr, value) {
     if (opts.cm === false || value === null) return [];
@@ -91,7 +91,7 @@ function load(opts) {
     querySelector() { return null; },
     querySelectorAll(selector) {
       if (/^link\[href\*="images\/profiles\//.test(selector)) return marker('link', 'href', markers.profiles);
-      if (/^script\[src\*="js\/app\/version\.js/.test(selector)) return marker('script', 'src', markers.version);
+      if (selector === 'script[data-main]') return marker('script', 'data-main', markers.main);
       return [];
     },
     addEventListener(type) { listeners.push('document ' + type); },

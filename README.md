@@ -155,6 +155,7 @@ live, against the servers listed below.
 
 Streamliner is tested against the following versions of Scala Content Manager.
 
+* 11.01.xx
 * 11.07.xx
 * 12.00.xx
 * 13.50.xx

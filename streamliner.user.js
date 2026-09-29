@@ -4632,14 +4632,17 @@
 
   // The match pattern names only the path, and other software can live at
   // /ContentManager too. So nothing happens until the page shows two of the
-  // app's own files: the profile stylesheet and version.js with its version
-  // cache-buster. Every tested version has both in <head>, as static HTML.
-  // The link comes before jquery.js and version.js after it. A jQuery that is
-  // already there is patched on the spot, and <head> is still being parsed,
-  // so the early dark sheet still beats the first paint. A page without both
-  // gets nothing at all: no listeners, no styles, no console line.
+  // app's own files: the profile stylesheet and the require.js loader that
+  // starts js/main. Every tested version has both in <head>, as static HTML.
+  // 11.07 and later add a version cache-buster to data-main, and 11.01 has
+  // none. 11.01 also has no js/app/version.js, so that can't be a marker.
+  // The link comes before jquery.js and the loader is the last script. A
+  // jQuery that is already there is patched on the spot, and <head> is still
+  // being parsed, so the early dark sheet still beats the first paint. The
+  // loader fetches main.js later, so the app has not started yet. A page
+  // without both gets nothing at all: no listeners, no styles, no console line.
   var PROFILES_CSS = /(^|\/)images\/profiles\/\?css=true$/;
-  var VERSION_JS = /(^|\/)js\/app\/version\.js\?_=\d+\.\d+\.\d+$/;
+  var MAIN_JS = /^js\/main(\.js(\?_=\d+\.\d+\.\d+)?)?$/;
 
   function hasMarker(selector, attr, pattern) {
     var found = document.querySelectorAll(selector);
@@ -4651,7 +4654,7 @@
 
   function isContentManager() {
     return hasMarker('link[href*="images/profiles/"]', 'href', PROFILES_CSS) &&
-      hasMarker('script[src*="js/app/version.js"]', 'src', VERSION_JS);
+      hasMarker('script[data-main]', 'data-main', MAIN_JS);
   }
 
   function boot() {
