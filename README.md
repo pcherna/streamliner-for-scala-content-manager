@@ -36,7 +36,7 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 
 ### Text Only Compact Menus
 
-(Content Manager 12.50 and up) Keeps Content Manager's compact side menus open, with text labels and section headers, which are easier to identify than the original icons-only.
+(Content Manager 13.x) Keeps Content Manager's compact side menus open, with text labels and section headers, which are easier to identify than the original icons-only.
 
 ### Section Links
 
@@ -158,6 +158,7 @@ Streamliner is tested against the following versions of Scala Content Manager.
 * 11.01.xx
 * 11.07.xx
 * 12.00.xx
+* 12.70.xx
 * 13.50.xx
 
 ## Contact

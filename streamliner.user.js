@@ -1015,7 +1015,13 @@
     if (items.length) log('pinned menu: ' + labelled + '/' + items.length + ' items labelled');
     applyPinnedHeads();
     applyMenuLanguage();
-    document.documentElement.classList[onLoginPage() ? 'remove' : 'add']('cm-helper-pinned-open');
+    // The open class hides the hamburger and the cog, on the premise that the
+    // pinned menus show the same entries. 12.70 has the toggles and no pinned
+    // menus at all (they arrived in 13.x), so there the class took away every
+    // way into the navigation. Open only what is there to open.
+    var hasPinned = !!document.querySelector('.leftPinnedMenu, .rightPinnedMenu');
+    var open = hasPinned && !onLoginPage();
+    document.documentElement.classList[open ? 'add' : 'remove']('cm-helper-pinned-open');
   }
 
   // The browser hyphenates by the element's language, and 13.50 writes
@@ -1953,17 +1959,18 @@
     bypassEl.textContent = BYPASS_CSS;
   }
 
-  var bypassCounts = {};      // list name + row id -> the counts object from the list call
+  // Keyed by the row element, not by id. The app fetches fresh counts every
+  // time it renders a list, and a count cached by id for the whole session was
+  // stale as soon as the user changed anything: a media item put into a
+  // playlist an hour into the session kept the app's own "1 time" while its
+  // neighbours had clauses. A re-rendered row is a new element and is counted
+  // again. A row the app keeps also keeps its counts. Ids are not known to be
+  // distinct across object types, and a late reply is filed under the very
+  // rows it was requested for, so a media row can never answer for a playlist
+  // row whatever list is showing by then.
+  var bypassCounts = new WeakMap();
   var bypassPending = false;
   var bypassGeneration = 0;
-
-  // Keyed by list as well as id. A reply can land after the user has moved on
-  // to another list, and ids are not known to be distinct across object types,
-  // so a media row's counts must never answer for a playlist row. Both carry a
-  // messagesCount, and the link would have pointed at the wrong things.
-  function bypassKey(kind, id) {
-    return kind.name + ':' + id;
-  }
 
   function usageKind() {
     if (!CONFIG.bypassUsageDialog) return null;
@@ -2094,7 +2101,7 @@
 
   function paintRowClauses(kind, row) {
     var id = row.getAttribute('data-id');
-    var counts = bypassCounts[bypassKey(kind, id)];
+    var counts = bypassCounts.get(row);
     if (!counts) return;
     var li = rowUsageLi(row);
     if (!li || li.getAttribute(BYPASS_MARK)) return;
@@ -2141,30 +2148,28 @@
       // No line at all means the item is unused, and there is nothing to say.
       var li = rowUsageLi(rows[i]);
       if (!li || li.getAttribute(BYPASS_MARK)) continue;
-      if (Object.prototype.hasOwnProperty.call(bypassCounts, bypassKey(kind, id))) {
+      if (bypassCounts.has(rows[i])) {
         paintRowClauses(kind, rows[i]);
         continue;
       }
-      pending.push(id);
+      pending.push(rows[i]);
     }
     if (!pending.length || bypassPending) return;
 
     bypassPending = true;
     var gen = bypassGeneration;
-    usageGet(bypassPath(kind, pending), function (data) {
+    var ids = pending.map(function (row) { return row.getAttribute('data-id'); });
+    usageGet(bypassPath(kind, ids), function (data) {
       if (gen !== bypassGeneration) return;
       bypassPending = false;
       var list = (data && data.list) || [];
-      // Stored under the list the request was for, whatever list is showing
-      // by the time the reply arrives.
-      for (var k = 0; k < list.length; k++) {
-        bypassCounts[bypassKey(kind, String(list[k].id))] = list[k];
-      }
-      // Anything the call did not answer for is recorded empty, so the next
-      // sweep does not queue it again and again.
+      var byId = {};
+      for (var k = 0; k < list.length; k++) byId[String(list[k].id)] = list[k];
+      // Filed under the rows the request was for. A row the call did not
+      // answer for is recorded empty, so the next sweep does not queue it
+      // again and again.
       for (var m = 0; m < pending.length; m++) {
-        var key = bypassKey(kind, pending[m]);
-        if (!Object.prototype.hasOwnProperty.call(bypassCounts, key)) bypassCounts[key] = {};
+        bypassCounts.set(pending[m], byId[ids[m]] || {});
       }
       applyBypassUsage();
     });
@@ -2185,7 +2190,7 @@
     if (bypassEl && bypassEl.parentNode) bypassEl.parentNode.removeChild(bypassEl);
     bypassEl = null;
     bypassGeneration++;
-    bypassCounts = {};
+    bypassCounts = new WeakMap();
     bypassPending = false;
   }
 
@@ -3713,7 +3718,7 @@
     {
       title: 'Text Only Compact Menus',
       master: 'textOnlyPinnedMenu',
-      blurb: '(Content Manager 12.50 and up) Keeps Content Manager\'s compact side ' +
+      blurb: '(Content Manager 13.x) Keeps Content Manager\'s compact side ' +
              'menus open, with text labels and section headers, which are easier to ' +
              'identify than the original icons-only.',
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
@@ -4754,7 +4759,6 @@
         usageClauses: usageClauses,
         usageCountPath: usageCountPath,
         bypassPath: bypassPath,
-        bypassKey: bypassKey,
         USAGE_KINDS: USAGE_KINDS,
         onTemplateList: onTemplateList,
         usageKind: usageKind,

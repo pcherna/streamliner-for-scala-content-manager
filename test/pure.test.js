@@ -161,13 +161,6 @@ test('usage clauses: each non-zero count becomes a linked clause, in kind order'
   assert.equal(usageClauses({ cats: [{ count: 'n', one: 'X', many: 'Xs' }] }, { n: 3 }, 1), null, 'a category with no link keeps the dialog');
 });
 
-test('bypass cache keys carry the list name so ids cannot collide across lists', () => {
-  const { bypassKey, USAGE_KINDS } = load().internals;
-  const media = USAGE_KINDS.find((k) => k.name === 'media');
-  const playlist = USAGE_KINDS.find((k) => k.name === 'playlist');
-  assert.notEqual(bypassKey(media, '7'), bypassKey(playlist, '7'));
-});
-
 test('routes: which list is showing', () => {
   const at = (hash) => load({ hash }).internals;
   assert.equal(at('#templates').onTemplateList(), true);
