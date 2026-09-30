@@ -74,6 +74,10 @@ The schedule page lists a channel's frames by name under the frame map, each one
 
 Player Properties shows a Generate Plan button when there are no unsaved changes, so you need not go back to the player list to generate the plan.
 
+### Open Workgroup Root
+
+Workgroup trees open with Root expanded, so the first level of workgroups shows without a click. This applies wherever you pick workgroups, and on System > Workgroups.
+
 ### Maintenance Files Fixes
 
 Improves the file selection for a maintenance job's Install File task. It lists every file on one page, sorted without regard to case, and drops the warning icon on files in use, since they are already annotated. Upload opens the file chooser straight away, and a new upload is pre-selected as soon as it appears. A task's Type list shows every choice without scrolling.

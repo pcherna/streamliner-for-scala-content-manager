@@ -122,6 +122,10 @@
     // so the plan can be made without going back to the player list.
     playerGeneratePlan: true,
 
+    // Every workgroup tree opens with Root collapsed. This opens Root once as
+    // the tree renders, so its first level shows. Collapsing it again sticks.
+    expandWorkgroupRoot: true,
+
     // The Install File task's file picker: every file on one page, sorted
     // without regard to case, no warning icons, the file chooser opened by
     // Upload, and a fresh upload selected as soon as it appears.
@@ -1337,6 +1341,40 @@
   function removeListFilters() {
     if (filtersEl && filtersEl.parentNode) filtersEl.parentNode.removeChild(filtersEl);
     filtersEl = null;
+  }
+
+  // --------------------------------------------------------- workgroup root
+
+  // Every workgroup tree is a hierarchical list whose rows carry a
+  // span.expand the app binds a click to. Its one top-level row is the root,
+  // which the API names "All". 11.07 and later show it as "Root" in most
+  // trees, while 11.01 and the Reports tree keep "All". The server refuses
+  // both names for a real workgroup, so a lone top-level row with either
+  // name is the root. Clicking the span runs the app's own expand.
+  //
+  // Every root is marked before any is clicked, so a Root the user collapses
+  // again stays collapsed. That includes the shared tree's Root, which the
+  // app opens by itself when the owner tree's Root opens. So a root is
+  // clicked only if it is still closed by then. A re-render makes a new row,
+  // which opens again.
+  function applyWorkgroupRoot() {
+    if (!CONFIG.expandWorkgroupRoot) return;
+    var rows = document.querySelectorAll('ul.hierarchical > li.item:not([data-cm-wg-root])');
+    var roots = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      if (!row.querySelector(':scope > span.expand')) continue;
+      if (row.parentNode.querySelectorAll(':scope > li.item').length !== 1) continue;
+      var nameEl = row.querySelector(':scope > .name');
+      var name = nameEl ? nameEl.textContent.trim() : '';
+      if (name !== 'Root' && name !== 'All') continue;
+      row.setAttribute('data-cm-wg-root', 'true');
+      roots.push(row);
+    }
+    for (var k = 0; k < roots.length; k++) {
+      var expand = roots[k].querySelector(':scope > span.expand');
+      if (expand) expand.click();
+    }
   }
 
   // ----------------------------------------------------- search suggestions
@@ -3912,6 +3950,14 @@
       advanced: []
     },
     {
+      title: 'Open Workgroup Root',
+      master: 'expandWorkgroupRoot',
+      blurb: 'Workgroup trees open with Root expanded, so the first level of ' +
+             'workgroups shows without a click. This applies wherever you pick ' +
+             'workgroups, and on System > Workgroups.',
+      advanced: []
+    },
+    {
       title: 'Maintenance Files Fixes',
       master: 'maintenanceFilesFixes',
       blurb: 'Improves the file selection for a maintenance job\'s Install File task. It ' +
@@ -4698,6 +4744,7 @@
     runFeature('nonScheduledContent', applyNonScheduledContent);
     runFeature('frameList', applyFrameList);
     runFeature('generatePlan', applyGeneratePlan);
+    runFeature('workgroupRoot', applyWorkgroupRoot);
     runFeature('userMenu', installUserMenuItem);
     runFeature('welcome', welcomeOnce);
     runFeature('fonts', watchFonts);
