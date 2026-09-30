@@ -36,7 +36,7 @@ Reduces or eliminates the delays introduced by Content Manager's UX transition a
 
 ### Text Only Compact Menus
 
-(Content Manager 13.x) Keeps Content Manager's compact side menus open, with text labels and section headers, which are easier to identify than the original icons-only.
+(Content Manager 12.70 and up) Shows the Main Menu and the System Menu as compact text columns on either side of the page, with section headers, which are easier to identify than the original icons-only. On 12.70 the menus otherwise fly in behind the hamburger and the cog. On 13.x they are already compact side menus, and this keeps them open with text labels.
 
 ### Section Links
 

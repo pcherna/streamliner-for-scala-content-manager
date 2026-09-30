@@ -161,6 +161,32 @@ test('usage clauses: each non-zero count becomes a linked clause, in kind order'
   assert.equal(usageClauses({ cats: [{ count: 'n', one: 'X', many: 'Xs' }] }, { n: 3 }, 1), null, 'a category with no link keeps the dialog');
 });
 
+test('compact menu rules address the marker class, and dock the 12.70 fly-ins', () => {
+  const { PINNED_TEXT_CSS } = load().internals;
+  // Every item rule goes through the marker, so the same sheet serves the
+  // 13.x pinned wrappers and the 12.70 nav elements.
+  assert.equal(PINNED_TEXT_CSS.includes('.leftPinnedMenu li'), false);
+  assert.equal(PINNED_TEXT_CSS.includes('.rightPinnedMenu li'), false);
+  assert.ok(PINNED_TEXT_CSS.includes('.cm-helper-menu li a'));
+  // The docking block: fixed under the header, toggles hidden, page pushed.
+  assert.ok(PINNED_TEXT_CSS.includes('html.cm-helper-docked header.navbar-sidebar .navbar-sidebar-menu'));
+  assert.ok(/cm-helper-docked[^}]*top: 80px/.test(PINNED_TEXT_CSS));
+  assert.ok(PINNED_TEXT_CSS.includes('html.cm-helper-docked header .primary-navbar-toggle'));
+  assert.ok(/html\.cm-helper-docked \.main[^}]*margin-left: calc\(%W% \+ 10px\)/.test(PINNED_TEXT_CSS));
+  // 13.x-only rules keep their own selectors.
+  assert.ok(PINNED_TEXT_CSS.includes('html.cm-helper-pinned-open .leftPinnedMenu.hidden'));
+});
+
+test('a click outside a docked menu, or with nothing docked, changes nothing', () => {
+  const { onDockedMenuClick, undockToggles, markMenus } = load().internals;
+  // The stand-in page has no header and no marker, so every path is the
+  // early return. What matters is that none of them throws.
+  assert.doesNotThrow(() => onDockedMenuClick({ target: null }));
+  assert.doesNotThrow(() => onDockedMenuClick({ target: { closest: () => null } }));
+  assert.doesNotThrow(() => undockToggles());
+  assert.doesNotThrow(() => markMenus(''));
+});
+
 test('routes: which list is showing', () => {
   const at = (hash) => load({ hash }).internals;
   assert.equal(at('#templates').onTemplateList(), true);

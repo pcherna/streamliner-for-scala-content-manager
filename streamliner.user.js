@@ -828,12 +828,32 @@
 
   // ------------------------------------------------------ pinned side menu
 
-  // The docked menus (.leftPinnedMenu / .rightPinnedMenu, min-width 75px with
-  // overflow-x hidden) are the shrunken layout. This swaps the icon for the
-  // label. The shrunken menu does not always render a label element, so the
-  // icon is only hidden once an anchor is known to carry text: the marker class
-  // cm-helper-has-label gates every hiding rule. A menu can never end up blank.
-  var PINNED_ITEM = '.leftPinnedMenu li a, .rightPinnedMenu li a';
+  // Two shapes of menu get the compact treatment, and one marker class,
+  // cm-helper-menu, names whichever is on the page:
+  //
+  //   13.x: the pinned menus (.leftPinnedMenu / .rightPinnedMenu, min-width
+  //   75px with overflow-x hidden) are the shrunken layout, and the marker goes
+  //   on those wrappers. The fly-in menus behind the hamburger and the cog are
+  //   left alone.
+  //
+  //   12.70: there are no pinned menus, only the fly-ins, which are the same
+  //   .navbar-sidebar-menu markup 13.x puts inside its pinned columns. The
+  //   marker goes on nav.primary-nav and nav.secondary-nav, and html gets
+  //   cm-helper-docked, which pins both fly-ins on screen as fixed columns and
+  //   pushes the page in between them.
+  //
+  // This swaps the icon for the label. The shrunken menu does not always
+  // render a label element, so the icon is only hidden once an anchor is known
+  // to carry text: the marker class cm-helper-has-label gates every hiding
+  // rule. A menu can never end up blank.
+  var MENU_MARK = 'cm-helper-menu';
+  var PINNED_ROOTS = '.leftPinnedMenu, .rightPinnedMenu';
+  var DOCK_ROOTS = 'header.navbar-sidebar .primary-nav, header.navbar-sidebar .secondary-nav';
+  var DOCK_MENU = 'header.navbar-sidebar .navbar-sidebar-menu';
+  // The one entry that is not an li: 12.70's System menu ends its settings
+  // block with a Software Updates link in a div of its own, at 14px white
+  // with a rule above it. It is labelled and sized like the rest.
+  var PINNED_ITEM = '.' + MENU_MARK + ' li a, .' + MENU_MARK + ' .software-downloads a';
 
   var PINNED_TEXT_CSS = [
     '.leftPinnedMenu, .rightPinnedMenu { min-width: %W% !important; }',
@@ -841,7 +861,7 @@
     // to the cell above. Left alone it grows past the width the layout reserves
     // and overhangs the page: on 13.50 "Scala Software Updates blog" made the
     // right menu 171px against a 118px cell. Pinning the width makes it wrap.
-    '.leftPinnedMenu .navbar-sidebar-menu, .rightPinnedMenu .navbar-sidebar-menu {',
+    '.cm-helper-menu .navbar-sidebar-menu {',
     '  width: %W% !important; box-sizing: border-box !important; }',
     'a.cm-helper-has-label > svg, a.cm-helper-has-label > img { display: none !important; }',
     'a.cm-helper-has-label > span, a.cm-helper-has-label > .nav-label,',
@@ -857,23 +877,28 @@
     // light.css gives the ul 12px side margins. In a 118px menu that is width
     // the labels need, so take it back and spend it on the hover target. This
     // gains room overall: the labels wrap less than they did with icons.
-    '.leftPinnedMenu section ul, .rightPinnedMenu section ul {',
+    '.cm-helper-menu section ul {',
     '  margin-left: 4px !important; margin-right: 4px !important; }',
     // Some list items carry a nudge to line their icons up: the Schedules item
     // sits at margin-left -3px. With the icons gone that just skews the text.
-    '.leftPinnedMenu li, .rightPinnedMenu li { margin-left: 0 !important; }',
+    '.cm-helper-menu li { margin-left: 0 !important; }',
     // inline-block, not block: a full-width row makes the hover target far
     // wider than the label it belongs to, and it reached under the arrow.
-    '.leftPinnedMenu li a, .rightPinnedMenu li a {',
+    '.cm-helper-menu li a, .cm-helper-menu .software-downloads a {',
     '  display: inline-block !important; margin-left: 0 !important; padding: 2px 6px !important;',
     '  max-width: 100% !important; box-sizing: border-box !important;',
     '  border-radius: 3px; transition: background-color 90ms ease-out; }',
+    // The Software Updates link keeps the app's rule above it, spaced like
+    // the rows, at the same 4px inset as the lists.
+    '.cm-helper-menu .settings > .software-downloads { margin: 0 4px !important; }',
+    '.cm-helper-menu .software-downloads a {',
+    '  display: block !important; margin: 8px 0 0 !important; padding: 8px 6px 2px !important; }',
     // Hiding the icons removed the only hover feedback, because light.css
     // changes the svg fill on hover and little else. A mid grey overlay reads
     // on the light module sections and on the dark settings blocks alike, and
     // it survives dark mode because helper sheets are never colour-inverted.
-    '.leftPinnedMenu li a:hover, .rightPinnedMenu li a:hover,',
-    '.leftPinnedMenu li a:focus-visible, .rightPinnedMenu li a:focus-visible {',
+    '.cm-helper-menu li a:hover, .cm-helper-menu li a:focus-visible,',
+    '.cm-helper-menu .software-downloads a:hover, .cm-helper-menu .software-downloads a:focus-visible {',
     '  background-color: %H% !important; }',
     // The compact menus stay open while the feature is on, so the pin and
     // unpin arrows go.
@@ -889,30 +914,62 @@
     'html.cm-helper-pinned-open .rightPinnedMenu.hidden { display: table-cell !important; }',
     'html.cm-helper-pinned-open header .primary-navbar-toggle,',
     'html.cm-helper-pinned-open header .system-menu .system-cog { display: none !important; }',
-    // Section headers copied from the fly-in menus. They are real h4s, so
-    // light.css's own section-heading colours apply, the white one on the dark
-    // Scala Apps block included, and dark mode recolours them like any other
-    // app rule. Only the size and spacing are ours. The side margin lines the
-    // text up with the labels: 4px of ul margin plus 6px of anchor padding.
-    '.leftPinnedMenu section > h4.cm-helper-section-head,',
-    '.rightPinnedMenu section > h4.cm-helper-section-head {',
+    // Section headers: on 13.x copied from the fly-in menus, on 12.70 the
+    // menu's own. They are real h4s, so light.css's own section-heading
+    // colours apply, the white one on the dark Scala Apps block included, and
+    // dark mode recolours them like any other app rule. Only the size and
+    // spacing are ours. The side margin lines the text up with the labels:
+    // 4px of ul margin plus 6px of anchor padding.
+    '.cm-helper-menu section > h4 {',
     '  display: block !important; margin: 10px 10px 3px !important; padding: 0 !important;',
     '  font-size: 10px !important; font-weight: 600 !important; line-height: 1.3 !important;',
     '  text-transform: uppercase; letter-spacing: .06em; opacity: .75;',
     '  white-space: normal; overflow-wrap: anywhere; }',
     // Scala Apps is a padded block of its own, so a top margin only adds a gap.
-    '.leftPinnedMenu section.scalaApps > h4.cm-helper-section-head { margin-top: 0 !important; }',
+    '.cm-helper-menu section.scalaApps > h4 { margin-top: 0 !important; }',
     // Translated labels run long, and some are one word: "Netzwerkeinstellungen"
     // is 21 letters in a 118px menu, which overflow-wrap splits at any letter.
     // Hyphenation splits it where German would. It needs the menu's language,
     // which applyMenuLanguage sets, and only outside English, so the English
     // labels keep the breaks they have always had.
-    '.leftPinnedMenu[data-cm-lang] a.cm-helper-has-label > *,',
-    '.rightPinnedMenu[data-cm-lang] a.cm-helper-has-label > *,',
-    '[data-cm-lang] h4.cm-helper-section-head { -webkit-hyphens: auto; hyphens: auto; }'
+    '.cm-helper-menu[data-cm-lang] a.cm-helper-has-label > *,',
+    '.cm-helper-menu[data-cm-lang] section > h4 { -webkit-hyphens: auto; hyphens: auto; }',
+    // Docking, 12.70. The fly-ins are position:fixed panels slid off screen by
+    // a transform, and light.css slides one in with a class on the header.
+    // Docked, both stay on screen with no transform, under the header and
+    // the breadcrumbs the way 13.x's columns sit (top 80px), at the compact
+    // width, and the page is pushed in between them by the width plus the
+    // 10px gutter its boxes already keep. The z-index stays under the app's
+    // own 100, so a fly-in that does open still wins, and under the header.
+    // The secondary menu is position:absolute inside the header and wraps its
+    // sections in a scroll wrapper of its own; both give way to the column.
+    'html.cm-helper-docked header.navbar-sidebar .navbar-sidebar-menu {',
+    '  position: fixed !important; top: 80px !important; bottom: 0 !important;',
+    '  height: auto !important; width: %W% !important; min-width: 0 !important;',
+    '  transform: none !important; transition: none !important; box-shadow: none !important;',
+    '  overflow-y: auto !important; overflow-x: hidden !important; z-index: 90 !important; }',
+    'html.cm-helper-docked header.navbar-sidebar .primary-nav .navbar-sidebar-menu {',
+    '  left: 0 !important; right: auto !important; }',
+    'html.cm-helper-docked header.navbar-sidebar .secondary-nav .navbar-sidebar-menu {',
+    '  left: auto !important; right: 0 !important; }',
+    'html.cm-helper-docked header .secondary-nav .navbar-scroll-wrapper {',
+    '  height: auto !important; overflow: visible !important; }',
+    // The hamburger, the cog, the close icons and the backdrops open and shut
+    // the fly-ins, which the columns replace.
+    'html.cm-helper-docked header .primary-navbar-toggle,',
+    'html.cm-helper-docked header .secondary-navbar-toggle,',
+    'html.cm-helper-docked header .system-menu .system-cog,',
+    'html.cm-helper-docked header .navbar-sidebar-backdrop { display: none !important; }',
+    // .main keeps a 1024px minimum on 12.70 that 13.x dropped, and the body
+    // clips horizontal overflow on both. Dropping the minimum is what lets a
+    // narrow window behave as 13.x does: the content shrinks between the
+    // columns instead of losing its right edge.
+    'html.cm-helper-docked .main, html.cm-helper-docked .uploaderStatus {',
+    '  margin-left: calc(%W% + 10px) !important; margin-right: calc(%W% + 10px) !important;',
+    '  min-width: 0 !important; }'
   ].join('\n');
 
-  var PINNED_SECTION = '.leftPinnedMenu section, .rightPinnedMenu section';
+  var PINNED_SECTION = '.' + MENU_MARK + ' section';
   var PINNED_HEAD = 'cm-helper-section-head';
 
   var pinnedEl = null;
@@ -1002,6 +1059,16 @@
         .split('%W%').join(cssValue('pinnedMenuWidth', 'min-width'))
         .split('%H%').join(cssValue('pinnedHoverColor', 'background-color'));
     }
+    // Which menus get the treatment. The 13.x pinned wrappers whenever they
+    // exist. Without them, the fly-ins, but only off the login page: docking
+    // is also what hides the toggles, so it must not happen where there is
+    // nothing to dock.
+    var hasPinned = !!document.querySelector(PINNED_ROOTS);
+    var docked = !hasPinned && !onLoginPage() && !!document.querySelector(DOCK_MENU);
+    markMenus(hasPinned ? PINNED_ROOTS : docked ? DOCK_ROOTS : '');
+    document.documentElement.classList[docked ? 'add' : 'remove']('cm-helper-docked');
+    if (docked) undockToggles();
+
     var index = buildOverrideIndex();
     var items = document.querySelectorAll(PINNED_ITEM);
     var labelled = 0;
@@ -1018,10 +1085,52 @@
     // The open class hides the hamburger and the cog, on the premise that the
     // pinned menus show the same entries. 12.70 has the toggles and no pinned
     // menus at all (they arrived in 13.x), so there the class took away every
-    // way into the navigation. Open only what is there to open.
-    var hasPinned = !!document.querySelector('.leftPinnedMenu, .rightPinnedMenu');
+    // way into the navigation. Open only what is there to open; 12.70 docks
+    // the fly-ins instead, above.
     var open = hasPinned && !onLoginPage();
     document.documentElement.classList[open ? 'add' : 'remove']('cm-helper-pinned-open');
+  }
+
+  // Puts the marker on the roots that match `selector` and takes it off any
+  // other element that has it, so a switch between shapes, or off, leaves no
+  // marker behind.
+  function markMenus(selector) {
+    var wanted = selector ? document.querySelectorAll(selector) : [];
+    var marked = document.querySelectorAll('.' + MENU_MARK);
+    for (var i = 0; i < marked.length; i++) {
+      if (Array.prototype.indexOf.call(wanted, marked[i]) < 0) marked[i].classList.remove(MENU_MARK);
+    }
+    for (var k = 0; k < wanted.length; k++) wanted[k].classList.add(MENU_MARK);
+  }
+
+  // 12.70's toggler flips a fly-in open on a click on its toggle, its backdrop
+  // or any link inside it, with a class on the header and overflow-y hidden
+  // written to body.style. Docked, the toggles and backdrops are hidden, but
+  // a click on a menu link still fires it, and the page would stop scrolling
+  // behind a menu that never moved. Rather than stop the click before the
+  // app sees it, which would keep it from every other handler too, the open
+  // state is undone right after: in the same task from a document listener,
+  // so nothing is painted in between, and again on every sweep in case the
+  // menu was open when the feature was switched on.
+  var DOCK_OPEN_CLASSES = ['navbar-sidebar-show-primary', 'navbar-sidebar-show-secondary'];
+
+  function undockToggles() {
+    var header = document.querySelector('header.navbar-sidebar');
+    if (!header) return;
+    var wasOpen = false;
+    for (var i = 0; i < DOCK_OPEN_CLASSES.length; i++) {
+      if (!header.classList.contains(DOCK_OPEN_CLASSES[i])) continue;
+      header.classList.remove(DOCK_OPEN_CLASSES[i]);
+      wasOpen = true;
+    }
+    if (wasOpen && document.body) document.body.style.overflowY = '';
+  }
+
+  function onDockedMenuClick(e) {
+    if (!document.documentElement.classList.contains('cm-helper-docked')) return;
+    var t = e.target;
+    if (!t || !t.closest || !t.closest(DOCK_MENU)) return;
+    undockToggles();
   }
 
   // The browser hyphenates by the element's language, and 13.50 writes
@@ -1030,7 +1139,7 @@
   // marker attribute records that the lang is ours, for teardown.
   function applyMenuLanguage() {
     var lang = appIsEnglish() ? '' : appLanguage();
-    var menus = document.querySelectorAll('.leftPinnedMenu, .rightPinnedMenu');
+    var menus = document.querySelectorAll('.' + MENU_MARK);
     for (var i = 0; i < menus.length; i++) {
       var menu = menus[i];
       if (lang) {
@@ -1043,15 +1152,18 @@
     }
   }
 
-  // The compact menus render the fly-in menus' sections without their h4
+  // 13.x's compact menus render the fly-in menus' sections without their h4
   // headers, so Content, Planning and the rest run together. Each pinned
   // section shares its class with a fly-in section (content, planning,
   // management...), which has the header in the app's own language. A section
   // with no header in the fly-in, such as settings, gets none here either.
+  // A docked 12.70 menu is the fly-in, headers and all, so a section that
+  // has its own is left alone: the sheet sizes the app's h4 like ours.
   function applyPinnedHeads() {
     var sections = document.querySelectorAll(PINNED_SECTION);
     for (var i = 0; i < sections.length; i++) {
       var section = sections[i];
+      if (section.querySelector(':scope > h4:not(.' + PINNED_HEAD + ')')) continue;
       var text = '';
       for (var j = 0; j < section.classList.length && !text; j++) {
         var name = section.classList[j];
@@ -1099,7 +1211,10 @@
     }
     var heads = document.querySelectorAll('h4.' + PINNED_HEAD);
     for (var h = 0; h < heads.length; h++) heads[h].parentNode.removeChild(heads[h]);
+    // The items are found through the marker, so they are restored before
+    // the marker goes.
     var items = document.querySelectorAll(PINNED_ITEM);
+    document.documentElement.classList.remove('cm-helper-docked');
     for (var i = 0; i < items.length; i++) {
       var a = items[i];
       a.classList.remove('cm-helper-has-label');
@@ -1111,6 +1226,7 @@
       if (existing && existing.textContent.trim() !== full) existing.textContent = full;
       a.removeAttribute('data-cm-full');
     }
+    markMenus('');
   }
 
   // --------------------------------------------------------- section links
@@ -3718,9 +3834,10 @@
     {
       title: 'Text Only Compact Menus',
       master: 'textOnlyPinnedMenu',
-      blurb: '(Content Manager 13.x) Keeps Content Manager\'s compact side ' +
-             'menus open, with text labels and section headers, which are easier to ' +
-             'identify than the original icons-only.',
+      blurb: '(Content Manager 12.70 and up) Docks Content Manager\'s side menus as ' +
+             'compact text columns. On 13.x, keeps its compact side menus open, with ' +
+             'text labels and section headers, which are easier to identify than the ' +
+             'original icons-only.',
       advanced: ['pinnedMenuWidth', 'pinnedHoverColor', 'labelOverrides']
     },
     {
@@ -4674,6 +4791,8 @@
     document.addEventListener('input', onValueEvent, true);
     document.addEventListener('change', onValueEvent, true);
     document.addEventListener('keydown', onKeyDown, true);
+    // Bubble phase, after the app's own menu toggler has run.
+    document.addEventListener('click', onDockedMenuClick, false);
     // On window, in capture, so it runs before the app's handler on document.
     window.addEventListener('keyup', onSignInEnter, true);
     window.addEventListener('keydown', onSuggestionKeyDown, true);
@@ -4759,6 +4878,10 @@
         usageClauses: usageClauses,
         usageCountPath: usageCountPath,
         bypassPath: bypassPath,
+        PINNED_TEXT_CSS: PINNED_TEXT_CSS,
+        markMenus: markMenus,
+        undockToggles: undockToggles,
+        onDockedMenuClick: onDockedMenuClick,
         USAGE_KINDS: USAGE_KINDS,
         onTemplateList: onTemplateList,
         usageKind: usageKind,
@@ -4993,6 +5116,7 @@
         var roots = document.querySelectorAll(
           '.leftPinnedMenu, .rightPinnedMenu, .navbar-sidebar-menu, [class*="PinnedMenu"]');
         out.push('streamliner ' + VERSION + ' on ' + location.host + location.pathname);
+        out.push('html classes: ' + JSON.stringify(document.documentElement.className));
         out.push('menu roots found: ' + roots.length);
         for (var i = 0; i < roots.length && i < 4; i++) {
           var r = roots[i];
