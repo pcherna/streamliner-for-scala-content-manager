@@ -176,14 +176,14 @@ Streamliner is tested against the following versions of Scala Content Manager.
 * 13.50.xx
 * 13.60.xx
 
-(Thanks to [@GunnarN68](https://github.com/GunnarN68) for assistance with 13.60.xxc)
+(Thanks to [@GunnarN68](https://github.com/GunnarN68) for assistance with 13.60.xx)
 
 ## Contact
 
 Please report bugs and request features on [GitHub Issues](https://github.com/pcherna/streamliner-for-scala-content-manager/issues).
 
-I'm available for contract work on Scala Content Manager, including
-setup, scripting, troubleshooting, and custom tooling. Email me at [consulting@nightblade.net](mailto:consulting@nightblade.net).
+I'm available for contract work on Scala digital signage systems, Content Manager, Player, Designer including
+setup, scripting, data integration, troubleshooting, and custom tooling. Email me at [consulting@nightblade.net](mailto:consulting@nightblade.net).
 
 ## Scala
 
